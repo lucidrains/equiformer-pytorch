@@ -2,6 +2,8 @@
 
 Implementation of the <a href="https://arxiv.org/abs/2206.11990">Equiformer</a>, SE3/E3 equivariant attention network that reaches new SOTA, and adopted for use by <a href="https://www.biorxiv.org/content/10.1101/2022.10.07.511322v1">EquiFold (Prescient Design)</a> for protein folding
 
+This repository may eventually contain an implementation of EquiFold as well, with the added FAPE loss + structural violation checks
+
 ## Citations
 
 ```bibtex
