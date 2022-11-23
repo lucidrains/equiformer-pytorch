@@ -20,13 +20,17 @@ setup(
     'proteins'
   ],
   install_requires=[
-    'einops>=0.4',
+    'einops>=0.6',
+    'filelock',
+    'numpy',
     'torch>=1.6',
   ],
   setup_requires=[
     'pytest-runner',
   ],
   tests_require=[
+    'lie_learn',
+    'numpy',
     'pytest'
   ],
   classifiers=[

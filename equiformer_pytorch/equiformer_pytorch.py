@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from einops import rearrange
 
-
 class Equiformer(nn.Module):
     def __init__(self):
         super().__init__()
