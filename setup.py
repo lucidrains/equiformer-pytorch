@@ -20,6 +20,7 @@ setup(
     'proteins'
   ],
   install_requires=[
+    'beartype',
     'einops>=0.6',
     'filelock',
     'numpy',

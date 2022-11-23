@@ -4,7 +4,7 @@ import torch
 from torch import einsum
 from einops import rearrange
 from itertools import product
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from equiformer_pytorch.irr_repr import irr_repr, spherical_harmonics
 from equiformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
@@ -25,11 +25,6 @@ RANDOM_ANGLES = [
     [2.52385107, 0.2908958, 3.90040975]
 ]
 
-# helpers
-
-@contextmanager
-def null_context():
-    yield
 
 # functions
 
@@ -168,7 +163,7 @@ def get_basis(r_ij, max_degree, differentiable = False):
     """
 
     # Relative positional encodings (vector)
-    context = null_context if not differentiable else torch.no_grad
+    context = nullcontext if not differentiable else torch.no_grad
 
     device, dtype = r_ij.device, r_ij.dtype
 
