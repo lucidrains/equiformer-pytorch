@@ -35,6 +35,51 @@ def safe_cat(arr, el, dim):
 def cast_tuple(val, depth):
     return val if isinstance(val, tuple) else (val,) * depth
 
+def broadcat(tensors, dim = -1):
+    num_tensors = len(tensors)
+    shape_lens = set(list(map(lambda t: len(t.shape), tensors)))
+    assert len(shape_lens) == 1, 'tensors must all have the same number of dimensions'
+    shape_len = list(shape_lens)[0]
+
+    dim = (dim + shape_len) if dim < 0 else dim
+    dims = list(zip(*map(lambda t: list(t.shape), tensors)))
+
+    expandable_dims = [(i, val) for i, val in enumerate(dims) if i != dim]
+    assert all([*map(lambda t: len(set(t[1])) <= 2, expandable_dims)]), 'invalid dimensions for broadcastable concatentation'
+    max_dims = list(map(lambda t: (t[0], max(t[1])), expandable_dims))
+    expanded_dims = list(map(lambda t: (t[0], (t[1],) * num_tensors), max_dims))
+    expanded_dims.insert(dim, (dim, dims[dim]))
+    expandable_shapes = list(zip(*map(lambda t: t[1], expanded_dims)))
+    tensors = list(map(lambda t: t[0].expand(*t[1]), zip(tensors, expandable_shapes)))
+    return torch.cat(tensors, dim = dim)
+
+def batched_index_select(values, indices, dim = 1):
+    value_dims = values.shape[(dim + 1):]
+    values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
+    indices = indices[(..., *((None,) * len(value_dims)))]
+    indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
+    value_expand_len = len(indices_shape) - (dim + 1)
+    values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
+
+    value_expand_shape = [-1] * len(values.shape)
+    expand_slice = slice(dim, (dim + value_expand_len))
+    value_expand_shape[expand_slice] = indices.shape[expand_slice]
+    values = values.expand(*value_expand_shape)
+
+    dim += value_expand_len
+    return values.gather(dim, indices)
+
+def fast_split(arr, splits, dim=0):
+    axis_len = arr.shape[dim]
+    splits = min(axis_len, max(splits, 1))
+    chunk_size = axis_len // splits
+    remainder = axis_len - chunk_size * splits
+    s = 0
+    for i in range(splits):
+        adjust, remainder = 1 if remainder > 0 else 0, remainder - 1
+        yield torch.narrow(arr, dim, s, chunk_size + adjust)
+        s += chunk_size + adjust
+
 def masked_mean(tensor, mask, dim = -1):
     diff_len = len(tensor.shape) - len(mask.shape)
     mask = mask[(..., *((None,) * diff_len))]

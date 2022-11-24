@@ -11,8 +11,9 @@ torch.set_default_dtype(torch.float64)
 
 BATCH_SIZE = 1
 GRADIENT_ACCUMULATE_EVERY = 16
+MAX_SEQ_LEN = 512
 
-def cycle(loader, len_thres = 500):
+def cycle(loader, len_thres = MAX_SEQ_LEN):
     while True:
         for data in loader:
             if data.seqs.shape[1] > len_thres:
@@ -20,8 +21,18 @@ def cycle(loader, len_thres = 500):
             yield data
 
 transformer = Equiformer(
-    dim = 8
-)
+    num_tokens = 24,
+    dim = 8,
+    dim_head = 8,
+    heads = 2,
+    depth = 2,
+    attend_self = True,
+    input_degrees = 1,
+    output_degrees = 2,
+    reduce_dim_out = True,
+    num_neighbors = 12,
+    num_degrees = 2
+).cuda()
 
 data = scn.load(
     casp_version = 12,
@@ -30,12 +41,12 @@ data = scn.load(
     batch_size = BATCH_SIZE,
     dynamic_batching = False    
 )
+
 # Add gaussian noise to the coords
 # Testing the refinement algorithm
 
 dl = cycle(data['train'])
 optim = Adam(transformer.parameters(), lr = 1e-4)
-transformer = transformer.cuda()
 
 for _ in range(10000):
     for _ in range(GRADIENT_ACCUMULATE_EVERY):
