@@ -53,11 +53,12 @@ def residual_fn(x, residual):
 
 # classes
 
+@beartype
 class Linear(nn.Module):
     def __init__(
         self,
-        fiber_in,
-        fiber_out
+        fiber_in: Tuple[int, ...],
+        fiber_out: Tuple[int, ...]
     ):
         super().__init__()
         self.weights = nn.ParameterList([])
@@ -69,62 +70,80 @@ class Linear(nn.Module):
 
     def forward(self, x):
         out = {}
+
         for degree, weight in zip(self.degrees, self.weights):
             out[degree] = einsum('b n d m, d e -> b n e m', x[degree], weight)
+
         return out
 
+@beartype
 class Norm(nn.Module):
     def __init__(
         self,
-        fiber,
-        nonlin = nn.GELU(),
-        gated_scale = False,
+        fiber: Tuple[int, ...],
         eps = 1e-12,
     ):
+        """
+        deviates from the paper slightly, will use rmsnorm throughout (no mean centering or bias, even for type0 fatures)
+        this has been proven at scale for a number of models, including T5 and alphacode
+        """
+
         super().__init__()
-        self.fiber = fiber
-        self.nonlin = nonlin
         self.eps = eps
+        self.transforms = nn.ParameterList([])
 
-        # Norm mappings: 1 per feature type
-        self.transforms = nn.ModuleList([])
-
-        for degree, chan in enumerate(fiber):
-            self.transforms.append(nn.ParameterDict({
-                'scale': nn.Parameter(torch.ones(1, 1, chan)) if not gated_scale else None,
-                'bias': nn.Parameter(rand_uniform((1, 1, chan), -1e-3, 1e-3)),
-                'w_gate': nn.Parameter(rand_uniform((chan, chan), -1e-3, 1e-3)) if gated_scale else None
-            }))
+        for degree, dim in enumerate(fiber):
+            self.transforms.append(nn.Parameter(torch.ones(dim, 1)))
 
     def forward(self, features):
         output = {}
 
-        for parameters, (degree, t) in zip(self.transforms, features.items()):
-            # Compute the norms and normalized features
-            norm = t.norm(dim = -1, keepdim = True).clamp(min = self.eps)
-            phase = t / norm
+        for scale, (degree, t) in zip(self.transforms, features.items()):
+            dim = t.shape[-2]
 
-            # Transform on norms
-            gate_weights, bias, scale = parameters['w_gate'], parameters['bias'], parameters['scale']
+            l2normed = t.norm(dim = -1, keepdim = True)
+            rms = l2normed.norm(dim = -2, keepdim = True) * (dim ** -0.5)
 
-            transformed = rearrange(norm, '... 1 -> ...')
-
-            if not exists(scale):
-                scale = einsum('b n d, d e -> b n e', transformed, gate_weights)
-
-            transformed = self.nonlin(transformed * scale + bias)
-            transformed = rearrange(transformed, '... -> ... 1')
-
-            # Nonlinearity on norm
-            output[degree] = (transformed * phase).view(*t.shape)
+            output[degree] = t / rms.clamp(min = self.eps) * scale
 
         return output
 
+@beartype
+class Gate(nn.Module):
+    def __init__(
+        self,
+        fiber: Tuple[int, ...]
+    ):
+        super().__init__()
+
+        type0_dim = fiber[0]
+        dim_gate = sum(fiber[1:])
+
+        assert type0_dim > dim_gate, 'sum of channels from rest of the degrees must be less than the channels in type 0, as they would be used up for gating and subtracted out'
+
+        self.fiber = fiber
+        self.num_degrees = len(fiber)
+        self.type0_dim_split = [*fiber[1:], type0_dim - dim_gate]
+
+    def forward(self, x):
+        output = {}
+
+        type0_tensor = x[0]
+        type0_tensor, *gates = type0_tensor.split(self.type0_dim_split, dim = -2)
+
+        output = {0: F.silu(type0_tensor)}  # silu for type0
+
+        for degree, gate in zip(range(1, self.num_degrees), gates):
+            output[degree] = x[degree] * gate.sigmoid()
+
+        return output
+
+@beartype
 class Conv(nn.Module):
     def __init__(
         self,
-        fiber_in,
-        fiber_out,
+        fiber_in: Tuple[int, ...],
+        fiber_out: Tuple[int, ...],
         self_interaction = True,
         pool = True,
         edge_dim = 0,
@@ -284,26 +303,34 @@ class PairwiseConv(nn.Module):
 
 # feed forwards
 
+@beartype
 class FeedForward(nn.Module):
     def __init__(
         self,
-        fiber,
+        fiber: Tuple[int, ...],
         mult = 4,
         norm_gated_scale = False
     ):
         super().__init__()
         self.fiber = fiber
+
         fiber_hidden = tuple(dim * mult for dim in fiber)
 
-        self.prenorm     = Norm(fiber, gated_scale = norm_gated_scale)
-        self.project_in  = Linear(fiber, fiber_hidden)
-        self.nonlin      = Norm(fiber_hidden)
+        dim_gate = sum(fiber_hidden[1:]) # sum of dimensions of type 1+, gated by sigmoid of type 0 in paper as nonlinearity
+        project_in_fiber_hidden = list(fiber_hidden)
+        project_in_fiber_hidden[0] += dim_gate
+        project_in_fiber_hidden = tuple(project_in_fiber_hidden)
+
+        self.prenorm     = Norm(fiber)
+        self.project_in  = Linear(fiber, project_in_fiber_hidden)
+        self.gate        = Gate(project_in_fiber_hidden)
         self.project_out = Linear(fiber_hidden, fiber)
 
     def forward(self, features):
         outputs = self.prenorm(features)
+
         outputs = self.project_in(outputs)
-        outputs = self.nonlin(outputs)
+        outputs = self.gate(outputs)
         outputs = self.project_out(outputs)
         return outputs
 
@@ -329,7 +356,7 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
         self.heads = heads
 
-        self.prenorm = Norm(fiber, gated_scale = norm_gated_scale)
+        self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
         self.to_v = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
@@ -492,7 +519,7 @@ class Equiformer(nn.Module):
 
         # out
 
-        self.norm = Norm(self.dim, gated_scale = norm_gated_scale, nonlin = nn.Identity())
+        self.norm = Norm(self.dim)
 
         self.linear_out = None
         if reduce_dim_out:
@@ -640,8 +667,7 @@ class Equiformer(nn.Module):
             mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
             x = map_values(mask_fn, x)
 
-        if 0 in x:
-            x[0] = rearrange(x[0], '... 1 -> ...')
+        x[0] = rearrange(x[0], '... 1 -> ...') # for type 0, just squeeze out the last dimension
 
         if exists(return_type):
             return x[return_type]

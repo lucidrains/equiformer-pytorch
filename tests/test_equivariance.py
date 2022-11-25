@@ -23,7 +23,6 @@ def test_equivariance():
     model = Equiformer(
         dim = DIM,
         depth = 1,
-        output_degrees = 2,
         reduce_dim_out = True
     )
 
