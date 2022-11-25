@@ -678,7 +678,7 @@ class Equiformer(nn.Module):
 
         # just return type 0 and type 1 features, reduced or not
 
-        type0, type1 = x[0], x[1]
+        type0, type1 = x[0], x.get(1, None)
 
         type0 = rearrange(type0, '... 1 -> ...') # for type 0, just squeeze out the last dimension
 
