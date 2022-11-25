@@ -38,7 +38,7 @@ def ext_modules():
 setup(
   name = 'equiformer-pytorch',
   packages = find_packages(exclude=[]),
-  version = '0.0.1',
+  version = __version__,
   license='MIT',
   description = 'Equiformer - SE3/E3 Graph Attention Transformer for Molecules and Proteins',
   author = 'Phil Wang',
