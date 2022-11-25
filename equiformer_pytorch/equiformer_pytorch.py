@@ -16,11 +16,19 @@ from einops import rearrange, repeat
 
 # fiber functions
 
-def fiber_product(fiber_in, fiber_out):
+@beartype
+def fiber_product(
+    fiber_in: Tuple[int, ...],
+    fiber_out: Tuple[int, ...]
+):
     fiber_in, fiber_out = tuple(map(lambda t: [(degree, dim) for degree, dim in enumerate(t)], (fiber_in, fiber_out)))
     return product(fiber_in, fiber_out)
 
-def fiber_and(fiber_in, fiber_out):
+@beartype
+def fiber_and(
+    fiber_in: Tuple[int, ...],
+    fiber_out: Tuple[int, ...]
+):
     fiber_in = [(degree, dim) for degree, dim in enumerate(fiber_in)]
     fiber_out_degrees = set(range(len(fiber_out)))
 
@@ -415,13 +423,14 @@ class Attention(nn.Module):
 
 # main class
 
+@beartype
 class Equiformer(nn.Module):
     def __init__(
         self,
         *,
-        dim,
+        dim: Union[int, Tuple[int, ...]],
+        dim_in: Optional[Union[int, Tuple[int, ...]]] = None,
         num_degrees = 2,
-        dim_in = None,
         input_degrees = 1,
         heads = 8,
         dim_head = 24,
