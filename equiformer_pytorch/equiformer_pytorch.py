@@ -364,7 +364,7 @@ class FeedForward(nn.Module):
 # attention
 
 @beartype
-class Attention(nn.Module):
+class DotProductAttention(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -402,7 +402,7 @@ class Attention(nn.Module):
             self.to_self_v = Linear(fiber, hidden_fiber)
 
 
-    def forward(self, features, edge_info, rel_dist, basis, pos_emb = None, mask = None):
+    def forward(self, features, edge_info, rel_dist, basis, mask = None):
         attend_self = self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -445,6 +445,22 @@ class Attention(nn.Module):
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         return self.to_out(outputs)
+
+@beartype
+class MLPAttention(nn.Module):
+    def __init__(
+        self,
+        fiber: Tuple[int, ...],
+        dim_head: Union[int, Tuple[int, ...]] = 64,
+        heads: Union[int, Tuple[int, ...]] = 8,
+        attend_self = False,
+        edge_dim = None,
+        splits = 4
+    ):
+        super().__init__()
+
+    def forward(self, features, edge_info, rel_dist, basis, mask = None):
+        raise NotImplementedError
 
 # main class
 
@@ -541,7 +557,7 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits),
+                DotProductAttention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits),
                 FeedForward(self.dim)
             ]))
 
