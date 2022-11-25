@@ -328,33 +328,47 @@ class PairwiseConv(nn.Module):
 
 # feed forwards
 
+def tuple_set_at_index(tup, index, value):
+    l = list(tup)
+    l[index] = value
+    return tuple(l)
+
 @beartype
 class FeedForward(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
         fiber_out: Optional[Tuple[int, ...]] = None,
-        mult = 4
+        mult = 4,
+        include_htype_norms = True
     ):
         super().__init__()
         self.fiber = fiber
 
         fiber_hidden = tuple(dim * mult for dim in fiber)
 
-        dim_gate = sum(fiber_hidden[1:]) # sum of dimensions of type 1+, gated by sigmoid of type 0 in paper as nonlinearity
-        project_in_fiber_hidden = list(fiber_hidden)
-        project_in_fiber_hidden[0] += dim_gate
-        project_in_fiber_hidden = tuple(project_in_fiber_hidden)
+        project_in_fiber = fiber
+        project_in_fiber_hidden = tuple_set_at_index(fiber_hidden, 0, sum(fiber_hidden))
+
+        self.include_htype_norms = include_htype_norms
+        if include_htype_norms:
+            project_in_fiber = tuple_set_at_index(project_in_fiber, 0, sum(fiber))
 
         fiber_out = default(fiber_out, fiber)
 
         self.prenorm     = Norm(fiber)
-        self.project_in  = Linear(fiber, project_in_fiber_hidden)
+        self.project_in  = Linear(project_in_fiber, project_in_fiber_hidden)
         self.gate        = Gate(project_in_fiber_hidden)
         self.project_out = Linear(fiber_hidden, fiber_out)
 
     def forward(self, features):
         outputs = self.prenorm(features)
+
+        if self.include_htype_norms:
+            type0, *htypes = [*outputs.values()]
+            htypes = map(lambda t: t.norm(dim = -1, keepdim = True), htypes)
+            type0 = torch.cat((type0, *htypes), dim = -2)
+            outputs[0] = type0
 
         outputs = self.project_in(outputs)
         outputs = self.gate(outputs)
@@ -503,7 +517,8 @@ class Equiformer(nn.Module):
         splits = 4,
         linear_out = True,
         embedding_grad_frac = 0.5,
-        single_headed_kv = False
+        single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
+        ff_include_htype_norms = False     # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
     ):
         super().__init__()
 
@@ -575,7 +590,7 @@ class Equiformer(nn.Module):
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
                 DotProductAttention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv),
-                FeedForward(self.dim)
+                FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
             ]))
 
         # out
