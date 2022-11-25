@@ -522,7 +522,8 @@ class Equiformer(nn.Module):
 
         # init embeddings
 
-        nn.init.normal_(self.token_emb.weight, std = 1e-5)
+        if exists(self.token_emb):
+            nn.init.normal_(self.token_emb.weight, std = 1e-5)
 
         if exists(self.pos_emb):
             nn.init.normal_(self.pos_emb.weight, std = 1e-5)
