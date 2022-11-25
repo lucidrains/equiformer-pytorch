@@ -318,6 +318,7 @@ class FeedForward(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
+        fiber_out: Optional[Tuple[int, ...]] = None,
         mult = 4
     ):
         super().__init__()
@@ -330,10 +331,12 @@ class FeedForward(nn.Module):
         project_in_fiber_hidden[0] += dim_gate
         project_in_fiber_hidden = tuple(project_in_fiber_hidden)
 
+        fiber_out = default(fiber_out, fiber)
+
         self.prenorm     = Norm(fiber)
         self.project_in  = Linear(fiber, project_in_fiber_hidden)
         self.gate        = Gate(project_in_fiber_hidden)
-        self.project_out = Linear(fiber_hidden, fiber)
+        self.project_out = Linear(fiber_hidden, fiber_out)
 
     def forward(self, features):
         outputs = self.prenorm(features)
@@ -511,9 +514,7 @@ class Equiformer(nn.Module):
 
         self.norm = Norm(self.dim)
 
-        self.linear_out = None
-        if reduce_dim_out:
-            self.linear_out = Linear(self.dim, (1,) * self.num_degrees)
+        self.ff_out = FeedForward(self.dim, (1,) * self.num_degrees) if reduce_dim_out else None
 
     def forward(
         self,
@@ -649,8 +650,8 @@ class Equiformer(nn.Module):
 
         # reduce dim if specified
 
-        if exists(self.linear_out):
-            x = self.linear_out(x)
+        if exists(self.ff_out):
+            x = self.ff_out(x)
             x = {k: rearrange(v, '... 1 c -> ... c') for k, v in x.items()}
 
         if return_pooled:
