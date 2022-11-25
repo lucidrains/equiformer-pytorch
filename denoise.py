@@ -22,15 +22,15 @@ def cycle(loader, len_thres = MAX_SEQ_LEN):
 
 transformer = Equiformer(
     num_tokens = 24,
-    dim = 8,
-    dim_head = (8, 4, 4),
-    heads = 2,
+    dim = (8, 4),
+    dim_head = (8, 4),
+    heads = (2, 1),
     depth = 4,
     attend_self = True,
-    input_degrees = 1,
     reduce_dim_out = True,
     num_neighbors = 12,
-    num_degrees = 2
+    num_degrees = 2,
+    linear_out = True
 ).cuda()
 
 data = scn.load(

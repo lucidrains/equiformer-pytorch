@@ -365,8 +365,12 @@ class Attention(nn.Module):
     ):
         super().__init__()
         num_degrees = len(fiber)
+
         dim_head = cast_tuple(dim_head, num_degrees)
+        assert len(dim_head) == num_degrees
+
         heads = cast_tuple(heads, num_degrees)
+        assert len(heads) == num_degrees
 
         hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
 
@@ -462,12 +466,16 @@ class Equiformer(nn.Module):
         # decide hidden dimensions for all types
 
         self.dim = cast_tuple(dim, num_degrees)
+        assert len(self.dim) == num_degrees
+
         self.num_degrees = len(self.dim)
 
         # decide input dimensions for all types
 
         dim_in = default(dim_in, (self.dim[0],))
         self.dim_in = cast_tuple(dim_in, input_degrees)
+        assert len(self.dim_in) == input_degrees
+
         self.input_degrees = len(self.dim_in)
 
         # token embedding
