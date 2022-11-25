@@ -1,5 +1,40 @@
 from setuptools import setup, find_packages
 
+import sys
+from functools import lru_cache
+from subprocess import DEVNULL, call
+from setuptools import setup, find_packages
+
+import torch
+from torch.utils.cpp_extension import CUDAExtension, BuildExtension
+
+exec(open('equiformer_pytorch/version.py').read())
+
+@lru_cache(None)
+def cuda_toolkit_available():
+  try:
+    call(["nvcc"], stdout = DEVNULL, stderr = DEVNULL)
+    return True
+  except FileNotFoundError:
+    return False
+
+def compile_args():
+  args = ["-fopenmp", "-ffast-math"]
+  if sys.platform == "darwin":
+    args = ["-Xpreprocessor", *args]
+  return args
+
+def ext_modules():
+  if not cuda_toolkit_available():
+    return []
+
+  return [
+    CUDAExtension(
+      __cuda_pkg_name__,
+      sources = ["equiformer_pytorch/equiformer_pytorch.cu"]
+    )
+  ]
+
 setup(
   name = 'equiformer-pytorch',
   packages = find_packages(exclude=[]),
@@ -34,6 +69,9 @@ setup(
     'numpy',
     'pytest'
   ],
+  ext_modules = ext_modules(),
+  cmdclass = {"build_ext": BuildExtension},
+  include_package_data = True,
   classifiers=[
     'Development Status :: 4 - Beta',
     'Intended Audience :: Developers',
