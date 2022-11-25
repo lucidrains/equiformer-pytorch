@@ -131,7 +131,11 @@ class Gate(nn.Module):
         type0_tensor = x[0]
         type0_tensor, *gates = type0_tensor.split(self.type0_dim_split, dim = -2)
 
-        output = {0: F.silu(type0_tensor)}  # silu for type0
+        # silu for type 0
+
+        output = {0: F.silu(type0_tensor)}
+
+        # sigmoid gate the higher types
 
         for degree, gate in zip(range(1, self.num_degrees), gates):
             output[degree] = x[degree] * gate.sigmoid()
@@ -155,7 +159,6 @@ class Conv(nn.Module):
         self.edge_dim = edge_dim
         self.self_interaction = self_interaction
 
-        # Neighbor -> center weights
         self.kernel_unary = nn.ModuleDict()
 
         self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
@@ -165,7 +168,6 @@ class Conv(nn.Module):
 
         self.pool = pool
 
-        # Center -> center weights
         if self_interaction:
             assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = Linear(fiber_in, fiber_out)
@@ -308,8 +310,7 @@ class FeedForward(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
-        mult = 4,
-        norm_gated_scale = False
+        mult = 4
     ):
         super().__init__()
         self.fiber = fiber
@@ -344,9 +345,7 @@ class Attention(nn.Module):
         heads = 8,
         attend_self = False,
         edge_dim = None,
-        use_null_kv = False,
-        splits = 4,
-        norm_gated_scale = False
+        splits = 4
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -363,17 +362,6 @@ class Attention(nn.Module):
         self.to_k = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
 
         self.to_out = Linear(hidden_fiber, fiber) if project_out else nn.Identity()
-
-        self.use_null_kv = use_null_kv
-        if use_null_kv:
-            self.null_keys = nn.ParameterDict()
-            self.null_values = nn.ParameterDict()
-
-            for degree in fiber.degrees:
-                m = to_order(degree)
-                degree_key = str(degree)
-                self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
-                self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
 
         self.attend_self = attend_self
         if attend_self:
@@ -411,12 +399,6 @@ class Attention(nn.Module):
                 k = torch.cat((self_k, k), dim = 3)
                 v = torch.cat((self_v, v), dim = 3)
 
-            if self.use_null_kv:
-                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
-                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i 1 d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-                k = torch.cat((null_k, k), dim = 3)
-                v = torch.cat((null_v, v), dim = 3)
-
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
             if exists(neighbor_mask):
@@ -451,9 +433,7 @@ class Equiformer(nn.Module):
         num_edge_tokens = None,
         edge_dim = None,
         attend_self = True,
-        use_null_kv = False,
         differentiable_coors = False,
-        norm_gated_scale = False,
         splits = 4,
     ):
         super().__init__()
@@ -513,8 +493,8 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits, norm_gated_scale = norm_gated_scale),
-                FeedForward(self.dim, norm_gated_scale = norm_gated_scale)
+                Attention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits),
+                FeedForward(self.dim)
             ]))
 
         # out
