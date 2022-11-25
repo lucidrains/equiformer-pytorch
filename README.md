@@ -10,6 +10,48 @@ Will report how it does on my toy task compared to some other networks I am more
 
 This repository may eventually contain an implementation of EquiFold as well, with the added FAPE loss + structural violation checks
 
+## Install
+
+```bash
+$ pip install equiformer-pytorch
+```
+
+## Usage
+
+```python
+import torch
+from equiformer_pytorch import Equiformer
+
+model = Equiformer(
+    num_tokens = 24,
+    dim = (4, 4, 2),
+    dim_head = (4, 4, 4),
+    heads = (2, 2, 2),
+    num_degrees = 3,
+    depth = 4,
+    attend_self = True,
+    input_degrees = 1,
+    reduce_dim_out = True
+).cuda()
+
+feats = torch.randint(0, 24, (1, 128)).cuda()
+coors = torch.randn(1, 128, 3).cuda()
+mask  = torch.ones(1, 128).bool().cuda()
+
+out = model(feats, coors, mask) # (1, 128)
+
+out.type0 # invariant type 0    - (1, 128)
+out.type1 # equivariant type 1  - (1, 128, 3)
+```
+
+## Testing
+
+Tests for spherical harmonics, network equivariance etc
+
+```bash
+$ python setup.py test
+```
+
 ## Citations
 
 ```bibtex
