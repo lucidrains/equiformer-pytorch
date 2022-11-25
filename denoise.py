@@ -23,9 +23,9 @@ def cycle(loader, len_thres = MAX_SEQ_LEN):
 transformer = Equiformer(
     num_tokens = 24,
     dim = 8,
-    dim_head = 8,
+    dim_head = (8, 4, 4),
     heads = 2,
-    depth = 2,
+    depth = 4,
     attend_self = True,
     input_degrees = 1,
     reduce_dim_out = True,
@@ -68,14 +68,13 @@ for _ in range(10000):
 
         noised_coords = coords + torch.randn_like(coords).cuda()
 
-        out = transformer(
+        _, type1_out = transformer(
             seq,
             noised_coords,
-            mask = masks,
-            return_type = 1
+            mask = masks
         )
 
-        denoised_coords = noised_coords + out
+        denoised_coords = noised_coords + type1_out
 
         loss = F.mse_loss(denoised_coords[masks], coords[masks]) 
         (loss / GRADIENT_ACCUMULATE_EVERY).backward()

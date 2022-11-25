@@ -16,8 +16,8 @@ def test_transformer():
     coors = torch.randn(1, 32, 3)
     mask  = torch.ones(1, 32).bool()
 
-    out = model(feats, coors, mask, return_type = 0)
-    assert out.shape == (1, 32, DIM), 'output must be of the right shape'
+    type0, _ = model(feats, coors, mask)
+    assert type0.shape == (1, 32, DIM), 'output must be of the right shape'
 
 def test_equivariance():
     model = Equiformer(
@@ -31,8 +31,8 @@ def test_equivariance():
     mask  = torch.ones(1, 32).bool()
 
     R   = rot(15, 0, 45)
-    out1 = model(feats, coors @ R, mask, return_type = 1)
-    out2 = model(feats, coors, mask, return_type = 1) @ R
+    _, out1 = model(feats, coors @ R, mask)
+    out2 = model(feats, coors, mask)[1] @ R
 
     diff = (out1 - out2).max()
     assert diff < 1e-4, 'is not equivariant'

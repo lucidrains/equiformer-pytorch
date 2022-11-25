@@ -14,6 +14,10 @@ from equiformer_pytorch.utils import exists, default, uniq, batched_index_select
 
 from einops import rearrange, repeat
 
+# constants
+
+Return = namedtuple('Return', ['type0', 'type1'])
+
 # fiber functions
 
 @beartype
@@ -137,7 +141,7 @@ class Gate(nn.Module):
         output = {}
 
         type0_tensor = x[0]
-        type0_tensor, *gates = type0_tensor.split(self.type0_dim_split, dim = -2)
+        *gates, type0_tensor = type0_tensor.split(self.type0_dim_split, dim = -2)
 
         # silu for type 0
 
@@ -353,18 +357,20 @@ class Attention(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
-        dim_head = 64,
-        heads = 8,
+        dim_head: Union[int, Tuple[int, ...]] = 64,
+        heads: Union[int, Tuple[int, ...]] = 8,
         attend_self = False,
         edge_dim = None,
         splits = 4
     ):
         super().__init__()
-        hidden_dim = dim_head * heads
-        hidden_fiber = (hidden_dim,) * len(fiber)
-        project_out = not (heads == 1 and len(fiber.dims) == 1 and dim_head == fiber.dims[0])
+        num_degrees = len(fiber)
+        dim_head = cast_tuple(dim_head, num_degrees)
+        heads = cast_tuple(heads, num_degrees)
 
-        self.scale = dim_head ** -0.5
+        hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
+
+        self.scale = tuple(dim ** -0.5 for dim in dim_head)
         self.heads = heads
 
         self.prenorm = Norm(fiber)
@@ -373,7 +379,7 @@ class Attention(nn.Module):
         self.to_v = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
         self.to_k = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
 
-        self.to_out = Linear(hidden_fiber, fiber) if project_out else nn.Identity()
+        self.to_out = Linear(hidden_fiber, fiber)
 
         self.attend_self = attend_self
         if attend_self:
@@ -382,7 +388,7 @@ class Attention(nn.Module):
 
 
     def forward(self, features, edge_info, rel_dist, basis, pos_emb = None, mask = None):
-        h, attend_self = self.heads, self.attend_self
+        attend_self = self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
 
@@ -399,7 +405,8 @@ class Attention(nn.Module):
             self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
 
         outputs = {}
-        for degree in features.keys():
+
+        for degree, h, scale in zip(features.keys(), self.heads, self.scale):
             q, k, v = map(lambda t: t[degree], (queries, keys, values))
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
@@ -411,7 +418,7 @@ class Attention(nn.Module):
                 k = torch.cat((self_k, k), dim = 3)
                 v = torch.cat((self_v, v), dim = 3)
 
-            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
+            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * scale
 
             if exists(neighbor_mask):
                 num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
@@ -435,8 +442,8 @@ class Equiformer(nn.Module):
         dim_in: Optional[Union[int, Tuple[int, ...]]] = None,
         num_degrees = 2,
         input_degrees = 1,
-        heads = 8,
-        dim_head = 24,
+        heads: Union[int, Tuple[int, ...]] = 8,
+        dim_head: Union[int, Tuple[int, ...]] = 24,
         depth = 2,
         valid_radius = 1e5,
         num_neighbors = float('inf'),
@@ -448,19 +455,20 @@ class Equiformer(nn.Module):
         attend_self = True,
         differentiable_coors = False,
         splits = 4,
+        linear_out = True
     ):
         super().__init__()
-
-        # decide input dimensions for all types
-
-        dim_in = default(dim_in, dim)
-        self.dim_in = cast_tuple(dim_in, input_degrees)
-        self.input_degrees = len(self.dim_in)
 
         # decide hidden dimensions for all types
 
         self.dim = cast_tuple(dim, num_degrees)
         self.num_degrees = len(self.dim)
+
+        # decide input dimensions for all types
+
+        dim_in = default(dim_in, (self.dim[0],))
+        self.dim_in = cast_tuple(dim_in, input_degrees)
+        self.input_degrees = len(self.dim_in)
 
         # token embedding
 
@@ -514,7 +522,9 @@ class Equiformer(nn.Module):
 
         self.norm = Norm(self.dim)
 
-        self.ff_out = FeedForward(self.dim, (1,) * self.num_degrees) if reduce_dim_out else None
+        proj_out_klass = Linear if linear_out else FeedForward
+
+        self.ff_out = proj_out_klass(self.dim, (1,) * self.num_degrees) if reduce_dim_out else None
 
     def forward(
         self,
@@ -658,9 +668,10 @@ class Equiformer(nn.Module):
             mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
             x = {k: mask_fn(v) for k, v in x.items()}
 
-        x[0] = rearrange(x[0], '... 1 -> ...') # for type 0, just squeeze out the last dimension
+        # just return type 0 and type 1 features, reduced or not
 
-        if exists(return_type):
-            return x[return_type]
+        type0, type1 = x[0], x[1]
 
-        return x
+        type0 = rearrange(type0, '... 1 -> ...') # for type 0, just squeeze out the last dimension
+
+        return Return(type0, type1)
