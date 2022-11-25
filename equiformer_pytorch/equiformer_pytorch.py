@@ -18,6 +18,17 @@ from einops import rearrange, repeat
 
 Return = namedtuple('Return', ['type0', 'type1'])
 
+# biasless layernorm
+
+class LayerNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(dim))
+        self.register_buffer("beta", torch.zeros(dim))
+
+    def forward(self, x):
+        return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
+
 # fiber functions
 
 @beartype
@@ -264,11 +275,11 @@ class RadialFunc(nn.Module):
 
         self.net = nn.Sequential(
             nn.Linear(default(edge_dim, 0) + 1, mid_dim),
-            nn.GELU(),
-            nn.LayerNorm(mid_dim),
+            nn.SiLU(),
+            LayerNorm(mid_dim),
             nn.Linear(mid_dim, mid_dim),
-            nn.GELU(),
-            nn.LayerNorm(mid_dim),
+            nn.SiLU(),
+            LayerNorm(mid_dim),
             nn.Linear(mid_dim, num_freq * in_dim * out_dim)
         )
 
