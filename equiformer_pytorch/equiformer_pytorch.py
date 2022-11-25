@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from equiformer_pytorch.basis import get_basis
-from equiformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split, rand_uniform, broadcat
+from equiformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split, rand_uniform, broadcat
 
 from einops import rearrange, repeat
 
@@ -337,10 +337,11 @@ class FeedForward(nn.Module):
 
 # attention
 
+@beartype
 class Attention(nn.Module):
     def __init__(
         self,
-        fiber,
+        fiber: Tuple[int, ...],
         dim_head = 64,
         heads = 8,
         attend_self = False,
@@ -641,11 +642,11 @@ class Equiformer(nn.Module):
 
         if exists(self.linear_out):
             x = self.linear_out(x)
-            x = map_values(lambda t: rearrange(t, '... 1 c -> ... c'), x)
+            x = {k: rearrange(v, '... 1 c -> ... c') for k, v in x.items()}
 
         if return_pooled:
             mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
-            x = map_values(mask_fn, x)
+            x = {k: mask_fn(v) for k, v in x.items()}
 
         x[0] = rearrange(x[0], '... 1 -> ...') # for type 0, just squeeze out the last dimension
 

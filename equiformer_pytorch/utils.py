@@ -24,9 +24,6 @@ def uniq(arr):
 def to_order(degree):
     return 2 * degree + 1
 
-def map_values(fn, d):
-    return {k: fn(v) for k, v in d.items()}
-
 def safe_cat(arr, el, dim):
     if not exists(arr):
         return el
