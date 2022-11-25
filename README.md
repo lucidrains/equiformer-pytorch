@@ -77,3 +77,24 @@ $ python setup.py test
     journal = {bioRxiv}
 }
 ```
+
+```bibtex
+@article{Shazeer2019FastTD,
+    title   = {Fast Transformer Decoding: One Write-Head is All You Need},
+    author  = {Noam M. Shazeer},
+    journal = {ArXiv},
+    year    = {2019},
+    volume  = {abs/1911.02150}
+}
+```
+
+```bibtex
+@misc{ding2021cogview,
+    title   = {CogView: Mastering Text-to-Image Generation via Transformers},
+    author  = {Ming Ding and Zhuoyi Yang and Wenyi Hong and Wendi Zheng and Chang Zhou and Da Yin and Junyang Lin and Xu Zou and Zhou Shao and Hongxia Yang and Jie Tang},
+    year    = {2021},
+    eprint  = {2105.13290},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CV}
+}
+```

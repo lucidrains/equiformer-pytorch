@@ -372,6 +372,7 @@ class DotProductAttention(nn.Module):
         heads: Union[int, Tuple[int, ...]] = 8,
         attend_self = False,
         edge_dim = None,
+        single_headed_kv = False,
         splits = 4
     ):
         super().__init__()
@@ -385,25 +386,30 @@ class DotProductAttention(nn.Module):
 
         hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
 
+        self.single_headed_kv = single_headed_kv
+
+        if not single_headed_kv:
+            kv_hidden_fiber = tuple(dim * 2 for dim in hidden_fiber)
+        else:
+            kv_hidden_fiber = tuple(dim * 2 for dim in dim_head)
+
         self.scale = tuple(dim ** -0.5 for dim in dim_head)
         self.heads = heads
 
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_v = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
-        self.to_k = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
-
+        self.to_kv = Conv(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
         self.to_out = Linear(hidden_fiber, fiber)
 
         self.attend_self = attend_self
         if attend_self:
-            self.to_self_k = Linear(fiber, hidden_fiber)
-            self.to_self_v = Linear(fiber, hidden_fiber)
+            self.to_self_kv = Linear(fiber, kv_hidden_fiber)
 
 
     def forward(self, features, edge_info, rel_dist, basis, mask = None):
-        attend_self = self.attend_self
+        attend_self, one_head_kv = self.attend_self, self.single_headed_kv
+
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
 
@@ -412,28 +418,37 @@ class DotProductAttention(nn.Module):
 
         features = self.prenorm(features)
 
-        queries = self.to_q(features)
-        keys    = self.to_k(features, edge_info, rel_dist, basis)
-        values  = self.to_v(features, edge_info, rel_dist, basis)
+        queries     = self.to_q(features)
+        keyvalues   = self.to_kv(features, edge_info, rel_dist, basis)
+
+        kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
 
         if attend_self:
-            self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
+            self_keyvalues = self.to_self_kv(features)
 
         outputs = {}
 
         for degree, h, scale in zip(features.keys(), self.heads, self.scale):
-            q, k, v = map(lambda t: t[degree], (queries, keys, values))
+            q, kv = map(lambda t: t[degree], (queries, keyvalues))
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
-            k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+
+            if not one_head_kv:
+                kv = rearrange(kv, f'b i j (h d) m -> b h i j d m', h = h)
 
             if attend_self:
-                self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
-                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n 1 d m', h = h), (self_k, self_v))
-                k = torch.cat((self_k, k), dim = 3)
-                v = torch.cat((self_v, v), dim = 3)
+                self_kv = self_keyvalues[degree]
 
-            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * scale
+                if not one_head_kv:
+                    self_kv = rearrange(self_kv, 'b n (h d) m -> b h n 1 d m', h = h)
+                else:
+                    self_kv = rearrange(self_kv, 'b n d m -> b n 1 d m')
+
+                kv = torch.cat((self_kv, kv), dim = -3)
+
+            k, v = kv.chunk(2, dim = -2)
+
+            sim = einsum(f'b h i d m, {kv_einsum_eq} -> b h i j', q, k) * scale
 
             if exists(neighbor_mask):
                 num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
@@ -441,7 +456,7 @@ class DotProductAttention(nn.Module):
                 sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
-            out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
+            out = einsum(f'b h i j, {kv_einsum_eq} -> b h i d m', attn, v)
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         return self.to_out(outputs)
@@ -487,7 +502,8 @@ class Equiformer(nn.Module):
         differentiable_coors = False,
         splits = 4,
         linear_out = True,
-        embedding_grad_frac = 0.25
+        embedding_grad_frac = 0.5,
+        single_headed_kv = False
     ):
         super().__init__()
 
@@ -523,10 +539,10 @@ class Equiformer(nn.Module):
         # init embeddings
 
         if exists(self.token_emb):
-            nn.init.normal_(self.token_emb.weight, std = 1e-5)
+            nn.init.normal_(self.token_emb.weight, std = 1e-2)
 
         if exists(self.pos_emb):
-            nn.init.normal_(self.pos_emb.weight, std = 1e-5)
+            nn.init.normal_(self.pos_emb.weight, std = 1e-2)
 
         # edges
 
@@ -558,7 +574,7 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                DotProductAttention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits),
+                DotProductAttention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv),
                 FeedForward(self.dim)
             ]))
 
