@@ -470,9 +470,12 @@ class Equiformer(nn.Module):
         attend_self = True,
         differentiable_coors = False,
         splits = 4,
-        linear_out = True
+        linear_out = True,
+        embedding_grad_frac = 0.25
     ):
         super().__init__()
+
+        self.embedding_grad_frac = embedding_grad_frac # trick for more stable training
 
         # decide hidden dimensions for all types
 
@@ -500,6 +503,13 @@ class Equiformer(nn.Module):
 
         self.num_positions = num_positions
         self.pos_emb = nn.Embedding(num_positions, type0_feat_dim) if exists(num_positions) else None
+
+        # init embeddings
+
+        nn.init.normal_(self.token_emb.weight, std = 1e-5)
+
+        if exists(self.pos_emb):
+            nn.init.normal_(self.pos_emb.weight, std = 1e-5)
 
         # edges
 
@@ -562,6 +572,8 @@ class Equiformer(nn.Module):
         if exists(self.pos_emb):
             assert feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
             feats = feats + self.pos_emb(torch.arange(feats.shape[1], device = feats.device))
+
+        feats = self.embedding_grad_frac * feats + (1 - self.embedding_grad_frac) * feats.detach()
 
         assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
