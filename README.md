@@ -44,6 +44,10 @@ out.type0 # invariant type 0    - (1, 128)
 out.type1 # equivariant type 1  - (1, 128, 3)
 ```
 
+## Appreciation
+
+- <a href="https://stability.ai/">StabilityAI</a> for the generous sponsorship, as well as my other sponsors out there
+
 ## Testing
 
 Tests for spherical harmonics, network equivariance etc

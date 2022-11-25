@@ -591,9 +591,7 @@ class Equiformer(nn.Module):
         feats,
         coors,
         mask = None,
-        adj_mat = None,
         edges = None,
-        return_type = None,
         return_pooled = False,
         neighbor_mask = None,
     ):
