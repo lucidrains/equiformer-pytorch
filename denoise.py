@@ -28,7 +28,6 @@ transformer = Equiformer(
     depth = 2,
     attend_self = True,
     input_degrees = 1,
-    output_degrees = 2,
     reduce_dim_out = True,
     num_neighbors = 12,
     num_degrees = 2

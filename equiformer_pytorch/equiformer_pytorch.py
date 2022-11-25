@@ -14,50 +14,25 @@ from equiformer_pytorch.utils import exists, default, uniq, map_values, batched_
 
 from einops import rearrange, repeat
 
-# fiber helpers
+# fiber functions
 
-FiberEl = namedtuple('FiberEl', ['degrees', 'dim'])
+def fiber_product(fiber_in, fiber_out):
+    fiber_in, fiber_out = tuple(map(lambda t: [(degree, dim) for degree, dim in enumerate(t)], (fiber_in, fiber_out)))
+    return product(fiber_in, fiber_out)
 
-class Fiber(nn.Module):
-    def __init__(
-        self,
-        structure
-    ):
-        super().__init__()
-        if isinstance(structure, dict):
-            structure = [FiberEl(degree, dim) for degree, dim in structure.items()]
-        self.structure = structure
+def fiber_and(fiber_in, fiber_out):
+    fiber_in = [(degree, dim) for degree, dim in enumerate(fiber_in)]
+    fiber_out_degrees = set(range(len(fiber_out)))
 
-    @property
-    def dims(self):
-        return uniq(map(lambda t: t[1], self.structure))
+    out = []
+    for degree, dim in fiber_in:
+        if degree not in fiber_out_degrees:
+            continue
 
-    @property
-    def degrees(self):
-        return map(lambda t: t[0], self.structure)
+        dim_out = fiber_out[degree]
+        out.append((degree, dim, dim_out))
 
-    @staticmethod
-    def create(num_degrees, dim):
-        dim_tuple = dim if isinstance(dim, tuple) else ((dim,) * num_degrees)
-        return Fiber([FiberEl(degree, dim) for degree, dim in zip(range(num_degrees), dim_tuple)])
-
-    def __getitem__(self, degree):
-        return dict(self.structure)[degree]
-
-    def __iter__(self):
-        return iter(self.structure)
-
-    def __mul__(self, fiber):
-        return product(self.structure, fiber.structure)
-
-    def __and__(self, fiber):
-        out = []
-        degrees_out = fiber.degrees
-        for degree, dim in self:
-            if degree in fiber.degrees:
-                dim_out = fiber[degree]
-                out.append((degree, dim, dim_out))
-        return out
+    return out
 
 # helper functions
 
@@ -88,7 +63,7 @@ class Linear(nn.Module):
         self.weights = nn.ParameterList([])
         self.degrees = []
 
-        for (degree, dim_in, dim_out) in (fiber_in & fiber_out):
+        for (degree, dim_in, dim_out) in fiber_and(fiber_in, fiber_out):
             self.weights.append(nn.Parameter(torch.randn(dim_in, dim_out) / sqrt(dim_in)))
             self.degrees.append(degree)
 
@@ -114,7 +89,7 @@ class Norm(nn.Module):
         # Norm mappings: 1 per feature type
         self.transforms = nn.ModuleList([])
 
-        for degree, chan in fiber:
+        for degree, chan in enumerate(fiber):
             self.transforms.append(nn.ParameterDict({
                 'scale': nn.Parameter(torch.ones(1, 1, chan)) if not gated_scale else None,
                 'bias': nn.Parameter(rand_uniform((1, 1, chan), -1e-3, 1e-3)),
@@ -166,7 +141,7 @@ class Conv(nn.Module):
 
         self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
 
-        for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
+        for (di, mi), (do, mo) in fiber_product(self.fiber_in, self.fiber_out):
             self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
 
         self.pool = pool
@@ -198,10 +173,10 @@ class Conv(nn.Module):
 
         # go through every permutation of input degree type to output degree type
 
-        for degree_out in self.fiber_out.degrees:
+        for degree_out, _ in enumerate(self.fiber_out):
             output = 0
 
-            for degree_in, m_in in self.fiber_in:
+            for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
 
                 x = inp[degree_in]
@@ -318,7 +293,7 @@ class FeedForward(nn.Module):
     ):
         super().__init__()
         self.fiber = fiber
-        fiber_hidden = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber)))
+        fiber_hidden = tuple(dim * mult for dim in fiber)
 
         self.prenorm     = Norm(fiber, gated_scale = norm_gated_scale)
         self.project_in  = Linear(fiber, fiber_hidden)
@@ -348,7 +323,7 @@ class Attention(nn.Module):
     ):
         super().__init__()
         hidden_dim = dim_head * heads
-        hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
+        hidden_fiber = (hidden_dim,) * len(fiber)
         project_out = not (heads == 1 and len(fiber.dims) == 1 and dim_head == fiber.dims[0])
 
         self.scale = dim_head ** -0.5
@@ -435,44 +410,49 @@ class Equiformer(nn.Module):
         self,
         *,
         dim,
+        num_degrees = 2,
+        dim_in = None,
+        input_degrees = 1,
         heads = 8,
         dim_head = 24,
         depth = 2,
-        input_degrees = 1,
-        num_degrees = 2,
-        output_degrees = 1,
         valid_radius = 1e5,
+        num_neighbors = float('inf'),
         reduce_dim_out = False,
         num_tokens = None,
         num_positions = None,
         num_edge_tokens = None,
         edge_dim = None,
-        reversible = False,
         attend_self = True,
         use_null_kv = False,
         differentiable_coors = False,
-        num_neighbors = float('inf'),
-        dim_in = None,
-        dim_out = None,
-        norm_out = False,
-        splits = 4,
         norm_gated_scale = False,
-        hidden_fiber_dict = None,
-        out_fiber_dict = None
+        splits = 4,
     ):
         super().__init__()
+
+        # decide input dimensions for all types
+
         dim_in = default(dim_in, dim)
         self.dim_in = cast_tuple(dim_in, input_degrees)
-        self.dim = dim
+        self.input_degrees = len(self.dim_in)
+
+        # decide hidden dimensions for all types
+
+        self.dim = cast_tuple(dim, num_degrees)
+        self.num_degrees = len(self.dim)
 
         # token embedding
 
-        self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
+        type0_feat_dim = self.dim_in[0]
+        self.type0_feat_dim = type0_feat_dim
+
+        self.token_emb = nn.Embedding(num_tokens, type0_feat_dim) if exists(num_tokens) else None
 
         # positional embedding
 
         self.num_positions = num_positions
-        self.pos_emb = nn.Embedding(num_positions, dim) if exists(num_positions) else None
+        self.pos_emb = nn.Embedding(num_positions, type0_feat_dim) if exists(num_positions) else None
 
         # edges
 
@@ -480,12 +460,6 @@ class Equiformer(nn.Module):
 
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
-
-        self.input_degrees = input_degrees
-
-        self.num_degrees = num_degrees if exists(num_degrees) else (max(hidden_fiber_dict.keys()) + 1)
-
-        self.output_degrees = output_degrees
 
         # whether to differentiate through basis, needed for alphafold2
 
@@ -498,31 +472,11 @@ class Equiformer(nn.Module):
 
         # define fibers and dimensionality
 
-        dim_in = default(dim_in, dim)
-        dim_out = default(dim_out, dim)
-
-        assert exists(num_degrees) or exists(hidden_fiber_dict), 'either num_degrees or hidden_fiber_dict must be specified'
-
-        fiber_in = Fiber.create(input_degrees, dim_in)
-
-        if exists(hidden_fiber_dict):
-            fiber_hidden = Fiber(hidden_fiber_dict)
-        elif exists(num_degrees):
-            fiber_hidden = Fiber.create(num_degrees, dim)
-
-        if exists(out_fiber_dict):
-            fiber_out = Fiber(out_fiber_dict)
-            self.output_degrees = max(out_fiber_dict.keys()) + 1
-        elif exists(output_degrees):
-            fiber_out = Fiber.create(output_degrees, dim_out)
-        else:
-            fiber_out = None
-
         conv_kwargs = dict(edge_dim = edge_dim, splits = splits)
 
         # main network
 
-        self.conv_in  = Conv(fiber_in, fiber_hidden, **conv_kwargs)
+        self.conv_in  = Conv(self.dim_in, self.dim, **conv_kwargs)
 
         # trunk
 
@@ -532,22 +486,17 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits, norm_gated_scale = norm_gated_scale),
-                FeedForward(fiber_hidden, norm_gated_scale = norm_gated_scale)
+                Attention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits, norm_gated_scale = norm_gated_scale),
+                FeedForward(self.dim, norm_gated_scale = norm_gated_scale)
             ]))
 
         # out
 
-        self.conv_out = Conv(fiber_hidden, fiber_out, **conv_kwargs) if exists(fiber_out) else None
+        self.norm = Norm(self.dim, gated_scale = norm_gated_scale, nonlin = nn.Identity())
 
-        self.norm = Norm(fiber_out, gated_scale = norm_gated_scale, nonlin = nn.Identity()) if (norm_out or reversible) and exists(fiber_out) else nn.Identity()
-
-        final_fiber = default(fiber_out, fiber_hidden)
-
-        self.linear_out = Linear(
-            final_fiber,
-            Fiber(list(map(lambda t: FiberEl(degrees = t[0], dim = 1), final_fiber)))
-        ) if reduce_dim_out else None
+        self.linear_out = None
+        if reduce_dim_out:
+            self.linear_out = Linear(self.dim, (1,) * self.num_degrees)
 
     def forward(
         self,
@@ -561,9 +510,6 @@ class Equiformer(nn.Module):
         neighbor_mask = None,
     ):
         _mask = mask
-
-        if self.output_degrees == 1:
-            return_type = 0
 
         if exists(self.token_emb):
             feats = self.token_emb(feats)
@@ -580,7 +526,7 @@ class Equiformer(nn.Module):
 
         b, n, d, *_, device = *feats[0].shape, feats[0].device
 
-        assert d == self.dim_in[0], f'feature dimension {d} must be equal to dimension given at init {self.dim_in[0]}'
+        assert d == self.type0_feat_dim, f'feature dimension {d} must be equal to dimension given at init {self.type0_feat_dim}'
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
         num_degrees, neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.valid_radius
@@ -679,11 +625,6 @@ class Equiformer(nn.Module):
         for attn, ff in self.layers:
             x = residual_fn(attn(x, **attn_kwargs), x)
             x = residual_fn(ff(x), x)
-
-        # project out
-
-        if exists(self.conv_out):
-            x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         # norm
 
