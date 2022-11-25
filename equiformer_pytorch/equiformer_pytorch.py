@@ -2,6 +2,9 @@ from math import sqrt
 from itertools import product
 from collections import namedtuple
 
+from typing import Optional, Union, Tuple
+from beartype import beartype
+
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
@@ -56,24 +59,24 @@ class Fiber(nn.Module):
                 out.append((degree, dim, dim_out))
         return out
 
+# helper functions
+
 def get_tensor_device_and_dtype(features):
-    first_tensor = next(iter(features.items()))[1]
+    _, first_tensor = next(iter(features.items()))
     return first_tensor.device, first_tensor.dtype
 
+def residual_fn(x, residual):
+    out = {}
+    for degree, tensor in x.items():
+        out[degree] = tensor
+
+        if degree not in residual:
+            continue
+
+        out[degree] = out[degree] + residual[degree]
+    return out
+
 # classes
-
-class Residual(nn.Module):
-    def forward(self, x, res):
-        out = {}
-        for degree, tensor in x.items():
-            degree = str(degree)
-            out[degree] = tensor
-
-            if degree not in res:
-                continue
-
-            out[degree] = out[degree] + res[degree]
-        return out
 
 class Linear(nn.Module):
     def __init__(
@@ -82,15 +85,16 @@ class Linear(nn.Module):
         fiber_out
     ):
         super().__init__()
-        self.weights = nn.ParameterDict()
+        self.weights = nn.ParameterList([])
+        self.degrees = []
 
         for (degree, dim_in, dim_out) in (fiber_in & fiber_out):
-            key = str(degree)
-            self.weights[key]  = nn.Parameter(torch.randn(dim_in, dim_out) / sqrt(dim_in))
+            self.weights.append(nn.Parameter(torch.randn(dim_in, dim_out) / sqrt(dim_in)))
+            self.degrees.append(degree)
 
     def forward(self, x):
         out = {}
-        for degree, weight in self.weights.items():
+        for degree, weight in zip(self.degrees, self.weights):
             out[degree] = einsum('b n d m, d e -> b n e m', x[degree], weight)
         return out
 
@@ -108,32 +112,33 @@ class Norm(nn.Module):
         self.eps = eps
 
         # Norm mappings: 1 per feature type
-        self.transform = nn.ModuleDict()
+        self.transforms = nn.ModuleList([])
+
         for degree, chan in fiber:
-            self.transform[str(degree)] = nn.ParameterDict({
+            self.transforms.append(nn.ParameterDict({
                 'scale': nn.Parameter(torch.ones(1, 1, chan)) if not gated_scale else None,
                 'bias': nn.Parameter(rand_uniform((1, 1, chan), -1e-3, 1e-3)),
                 'w_gate': nn.Parameter(rand_uniform((chan, chan), -1e-3, 1e-3)) if gated_scale else None
-            })
+            }))
 
     def forward(self, features):
         output = {}
-        for degree, t in features.items():
+
+        for parameters, (degree, t) in zip(self.transforms, features.items()):
             # Compute the norms and normalized features
             norm = t.norm(dim = -1, keepdim = True).clamp(min = self.eps)
             phase = t / norm
 
             # Transform on norms
-            parameters = self.transform[degree]
             gate_weights, bias, scale = parameters['w_gate'], parameters['bias'], parameters['scale']
 
-            transformed = rearrange(norm, '... () -> ...')
+            transformed = rearrange(norm, '... 1 -> ...')
 
             if not exists(scale):
                 scale = einsum('b n d, d e -> b n e', transformed, gate_weights)
 
             transformed = self.nonlin(transformed * scale + bias)
-            transformed = rearrange(transformed, '... -> ... ()')
+            transformed = rearrange(transformed, '... -> ... 1')
 
             # Nonlinearity on norm
             output[degree] = (transformed * phase).view(*t.shape)
@@ -162,7 +167,7 @@ class Conv(nn.Module):
         self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, splits = splits)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
 
         self.pool = pool
 
@@ -170,7 +175,6 @@ class Conv(nn.Module):
         if self_interaction:
             assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = Linear(fiber_in, fiber_out)
-            self.self_interact_sum = Residual()
 
     def forward(
         self,
@@ -181,7 +185,7 @@ class Conv(nn.Module):
     ):
         splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
-        rel_dist = rearrange(rel_dist, 'b m n -> b m n ()')
+        rel_dist = rearrange(rel_dist, 'b m n -> b m n 1')
 
         kernels = {}
         outputs = {}
@@ -196,12 +200,11 @@ class Conv(nn.Module):
 
         for degree_out in self.fiber_out.degrees:
             output = 0
-            degree_out_key = str(degree_out)
 
             for degree_in, m_in in self.fiber_in:
                 etype = f'({degree_in},{degree_out})'
 
-                x = inp[str(degree_in)]
+                x = inp[degree_in]
 
                 x = batched_index_select(x, neighbor_indices, dim = 1)
                 x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
@@ -228,16 +231,15 @@ class Conv(nn.Module):
             leading_shape = x.shape[:2] if self.pool else x.shape[:3]
             output = output.view(*leading_shape, -1, to_order(degree_out))
 
-            outputs[degree_out_key] = output
+            outputs[degree_out] = output
 
         if self.self_interaction:
             self_interact_out = self.self_interact(inp)
-            outputs = self.self_interact_sum(outputs, self_interact_out)
+            outputs = residual_fn(outputs, self_interact_out)
 
         return outputs
 
 class RadialFunc(nn.Module):
-    """NN parameterized radial profile function."""
     def __init__(
         self,
         num_freq,
@@ -251,32 +253,29 @@ class RadialFunc(nn.Module):
         self.in_dim = in_dim
         self.mid_dim = mid_dim
         self.out_dim = out_dim
-        self.edge_dim = default(edge_dim, 0)
 
         self.net = nn.Sequential(
-            nn.Linear(self.edge_dim + 1, mid_dim),
-            nn.LayerNorm(mid_dim),
+            nn.Linear(default(edge_dim, 0) + 1, mid_dim),
             nn.GELU(),
+            nn.LayerNorm(mid_dim),
             nn.Linear(mid_dim, mid_dim),
-            nn.LayerNorm(mid_dim),
             nn.GELU(),
+            nn.LayerNorm(mid_dim),
             nn.Linear(mid_dim, num_freq * in_dim * out_dim)
         )
 
     def forward(self, x):
         y = self.net(x)
-        return rearrange(y, '... (o i f) -> ... o () i () f', i = self.in_dim, o = self.out_dim)
+        return rearrange(y, '... (o i f) -> ... o 1 i 1 f', i = self.in_dim, o = self.out_dim)
 
 class PairwiseConv(nn.Module):
-    """SE(3)-equivariant convolution between two single-type features"""
     def __init__(
         self,
         degree_in,
         nc_in,
         degree_out,
         nc_out,
-        edge_dim = 0,
-        splits = 4
+        edge_dim = 0
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -290,10 +289,7 @@ class PairwiseConv(nn.Module):
 
         self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
 
-        self.splits = splits
-
     def forward(self, feat, basis):
-        splits = self.splits
         R = self.rp(feat)
         B = basis[f'{self.degree_in},{self.degree_out}']
 
@@ -317,39 +313,24 @@ class FeedForward(nn.Module):
     def __init__(
         self,
         fiber,
-        mult = 4
+        mult = 4,
+        norm_gated_scale = False
     ):
         super().__init__()
         self.fiber = fiber
         fiber_hidden = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber)))
 
+        self.prenorm     = Norm(fiber, gated_scale = norm_gated_scale)
         self.project_in  = Linear(fiber, fiber_hidden)
         self.nonlin      = Norm(fiber_hidden)
         self.project_out = Linear(fiber_hidden, fiber)
 
     def forward(self, features):
-        outputs = self.project_in(features)
+        outputs = self.prenorm(features)
+        outputs = self.project_in(outputs)
         outputs = self.nonlin(outputs)
         outputs = self.project_out(outputs)
         return outputs
-
-class FeedForwardBlock(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        norm_gated_scale = False
-    ):
-        super().__init__()
-        self.fiber = fiber
-        self.prenorm = Norm(fiber, gated_scale = norm_gated_scale)
-        self.feedforward = FeedForward(fiber)
-        self.residual = Residual()
-
-    def forward(self, features):
-        res = features
-        out = self.prenorm(features)
-        out = self.feedforward(out)
-        return self.residual(out, res)
 
 # attention
 
@@ -362,7 +343,8 @@ class Attention(nn.Module):
         attend_self = False,
         edge_dim = None,
         use_null_kv = False,
-        splits = 4
+        splits = 4,
+        norm_gated_scale = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -372,6 +354,7 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
         self.heads = heads
 
+        self.prenorm = Norm(fiber, gated_scale = norm_gated_scale)
 
         self.to_q = Linear(fiber, hidden_fiber)
         self.to_v = Conv(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
@@ -402,7 +385,9 @@ class Attention(nn.Module):
         neighbor_indices, neighbor_mask, edges = edge_info
 
         if exists(neighbor_mask):
-            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
+            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b 1 i j')
+
+        features = self.prenorm(features)
 
         queries = self.to_q(features)
         keys    = self.to_k(features, edge_info, rel_dist, basis)
@@ -420,13 +405,13 @@ class Attention(nn.Module):
 
             if attend_self:
                 self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
-                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
+                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n 1 d m', h = h), (self_k, self_v))
                 k = torch.cat((self_k, k), dim = 3)
                 v = torch.cat((self_v, v), dim = 3)
 
             if self.use_null_kv:
                 null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
-                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i 1 d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
                 k = torch.cat((null_k, k), dim = 3)
                 v = torch.cat((null_v, v), dim = 3)
 
@@ -442,29 +427,6 @@ class Attention(nn.Module):
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         return self.to_out(outputs)
-
-class AttentionBlock(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        dim_head = 24,
-        heads = 8,
-        attend_self = False,
-        edge_dim = None,
-        use_null_kv = False,
-        splits = 4,
-        norm_gated_scale = False
-    ):
-        super().__init__()
-        self.attn = Attention(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits)
-        self.prenorm = Norm(fiber, gated_scale = norm_gated_scale)
-        self.residual = Residual()
-
-    def forward(self, features, edge_info, rel_dist, basis, pos_emb = None, mask = None):
-        res = features
-        outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis, pos_emb, mask)
-        return self.residual(outputs, res)
 
 # main class
 
@@ -493,7 +455,6 @@ class Equiformer(nn.Module):
         dim_in = None,
         dim_out = None,
         norm_out = False,
-        num_conv_layers = 0,
         splits = 4,
         norm_gated_scale = False,
         hidden_fiber_dict = None,
@@ -542,7 +503,7 @@ class Equiformer(nn.Module):
 
         assert exists(num_degrees) or exists(hidden_fiber_dict), 'either num_degrees or hidden_fiber_dict must be specified'
 
-        fiber_in     = Fiber.create(input_degrees, dim_in)
+        fiber_in = Fiber.create(input_degrees, dim_in)
 
         if exists(hidden_fiber_dict):
             fiber_hidden = Fiber(hidden_fiber_dict)
@@ -563,27 +524,17 @@ class Equiformer(nn.Module):
 
         self.conv_in  = Conv(fiber_in, fiber_hidden, **conv_kwargs)
 
-        # pre-convs
-
-        self.convs = nn.ModuleList([])
-        for _ in range(num_conv_layers):
-            self.convs.append(nn.ModuleList([
-                Conv(fiber_hidden, fiber_hidden, **conv_kwargs),
-                Norm(fiber_hidden, gated_scale = norm_gated_scale)
-            ]))
-
         # trunk
 
         self.attend_self = attend_self
 
-        layers = nn.ModuleList([])
-        for ind in range(depth):
-            layers.append(nn.ModuleList([
-                AttentionBlock(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits, norm_gated_scale = norm_gated_scale),
-                FeedForwardBlock(fiber_hidden, norm_gated_scale = norm_gated_scale)
-            ]))
+        self.layers = nn.ModuleList([])
 
-        self.layers = layers
+        for ind in range(depth):
+            self.layers.append(nn.ModuleList([
+                Attention(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, splits = splits, norm_gated_scale = norm_gated_scale),
+                FeedForward(fiber_hidden, norm_gated_scale = norm_gated_scale)
+            ]))
 
         # out
 
@@ -619,15 +570,15 @@ class Equiformer(nn.Module):
 
         if exists(self.pos_emb):
             assert feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
-            pos_emb = self.pos_emb(torch.arange(feats.shape[1], device = feats.device))
-            feats += rearrange(pos_emb, 'n d -> () n d')
+            feats = feats + self.pos_emb(torch.arange(feats.shape[1], device = feats.device))
 
         assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if torch.is_tensor(feats):
-            feats = {'0': feats[..., None]}
+            feats = rearrange(feats, '... -> ... 1')
+            feats = {0: feats}
 
-        b, n, d, *_, device = *feats['0'].shape, feats['0'].device
+        b, n, d, *_, device = *feats[0].shape, feats[0].device
 
         assert d == self.dim_in[0], f'feature dimension {d} must be equal to dimension given at init {self.dim_in[0]}'
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
@@ -636,20 +587,20 @@ class Equiformer(nn.Module):
 
         # se3 transformer by default cannot have a node attend to itself
 
-        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
+        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> 1 i j')
         remove_self = lambda t: t.masked_select(exclude_self_mask).reshape(b, n, n - 1)
         get_max_value = lambda t: torch.finfo(t.dtype).max
 
         # exclude edge of token to itself
 
         indices = repeat(torch.arange(n, device = device), 'j -> b i j', b = b, i = n)
-        rel_pos  = rearrange(coors, 'b n d -> b n () d') - rearrange(coors, 'b n d -> b () n d')
+        rel_pos  = rearrange(coors, 'b n d -> b n 1 d') - rearrange(coors, 'b n d -> b 1 n d')
 
         indices = indices.masked_select(exclude_self_mask).reshape(b, n, n - 1)
         rel_pos = rel_pos.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, 3)
 
         if exists(mask):
-            mask = rearrange(mask, 'b i -> b i ()') * rearrange(mask, 'b j -> b () j')
+            mask = rearrange(mask, 'b i -> b i 1') * rearrange(mask, 'b j -> b 1 j')
             mask = mask.masked_select(exclude_self_mask).reshape(b, n, n - 1)
 
         if exists(edges):
@@ -716,12 +667,6 @@ class Equiformer(nn.Module):
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
-        # preconvolution layers
-
-        for conv, nonlin in self.convs:
-            x = nonlin(x)
-            x = conv(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
-
         # transformer layers
 
         attn_kwargs = dict(
@@ -732,8 +677,8 @@ class Equiformer(nn.Module):
         )
 
         for attn, ff in self.layers:
-            x = attn(x, **attn_kwargs)
-            x = ff(x)
+            x = residual_fn(attn(x, **attn_kwargs), x)
+            x = residual_fn(ff(x), x)
 
         # project out
 
@@ -748,16 +693,16 @@ class Equiformer(nn.Module):
 
         if exists(self.linear_out):
             x = self.linear_out(x)
-            x = map_values(lambda t: t.squeeze(dim = 2), x)
+            x = map_values(lambda t: rearrange(t, '... 1 c -> ... c'), x)
 
         if return_pooled:
             mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
             x = map_values(mask_fn, x)
 
-        if '0' in x:
-            x['0'] = x['0'].squeeze(dim = -1)
+        if 0 in x:
+            x[0] = rearrange(x[0], '... 1 -> ...')
 
         if exists(return_type):
-            return x[str(return_type)]
+            return x[return_type]
 
         return x
