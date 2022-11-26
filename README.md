@@ -12,6 +12,8 @@ This repository may eventually contain an implementation of EquiFold as well, wi
 
 Update: The choice of the norm or gating (still need to ablate to figure out which [or both?] is contributing to the greatly improved results). however, MLP attention does not seem to be doing anything (caveat, still missing a DTP in the values branch, and of course, need to check for bugs). more experiments pending
 
+<a href="https://wandb.ai/lucidrains/equiformer/reports/equiformer-and-mlp-attention---VmlldzozMDQwMTY3?accessToken=xmj0a1c80m8hehylrmbr0hndka8kk1vxmdrmvtmy7r1qgphtnuhq1643cb76zgfo">Running experiment, denoising residue positions in protein sequence</a>
+
 ## Install
 
 ```bash
