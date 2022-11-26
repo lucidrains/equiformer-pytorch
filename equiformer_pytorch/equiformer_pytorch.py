@@ -496,6 +496,7 @@ class MLPAttention(nn.Module):
         attend_self = False,
         edge_dim = None,
         splits = 4,
+        single_headed_kv = False,
         attn_leakyrelu_slope = 0.1,
         attn_hidden_dim_mult = 4,
         **kwargs
@@ -511,6 +512,9 @@ class MLPAttention(nn.Module):
 
         hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
 
+        self.single_headed_kv = single_headed_kv
+        value_hidden_fiber = hidden_fiber if not single_headed_kv else dim_head
+
         self.scale = tuple(dim ** -0.5 for dim in dim_head)
         self.heads = heads
 
@@ -520,14 +524,14 @@ class MLPAttention(nn.Module):
         # (1) gating the htypes on the values branch
         # (2) attention logits, with dimension equal to heads amount for starters
 
-        type0_dim = hidden_fiber[0]
-        htype_dims = sum(hidden_fiber[1:])
+        type0_dim = value_hidden_fiber[0]
+        htype_dims = sum(value_hidden_fiber[1:])
 
-        value_gate_fiber = tuple_set_at_index(hidden_fiber, 0, type0_dim + htype_dims)
+        value_gate_fiber = tuple_set_at_index(value_hidden_fiber, 0, type0_dim + htype_dims)
 
         attn_hidden_dims = tuple(head * attn_hidden_dim_mult for head in heads)
 
-        intermediate_fiber = tuple_set_at_index(hidden_fiber, 0, sum(attn_hidden_dims) + type0_dim + htype_dims)
+        intermediate_fiber = tuple_set_at_index(value_hidden_fiber, 0, sum(attn_hidden_dims) + type0_dim + htype_dims)
         self.intermediate_type0_split = [*attn_hidden_dims, type0_dim + htype_dims]
 
         # main branch tensor product
@@ -562,6 +566,8 @@ class MLPAttention(nn.Module):
         basis,
         mask = None
     ):
+        one_headed_kv = self.single_headed_kv
+
         features = self.prenorm(features)
 
         intermediate = self.to_attn_and_v(features, edge_info, rel_dist, basis)
@@ -578,7 +584,7 @@ class MLPAttention(nn.Module):
             attn_intermediate = rearrange(attn_intermediate, '... 1 -> ...')
             attn_logits = fn(attn_intermediate)
             attn_logits = attn_logits * scale
-            attn = attn_logits.softmax(dim = -1) # (batch, source, target, heads)
+            attn = attn_logits.softmax(dim = -2) # (batch, source, target, heads)
             attentions.append(attn)
 
         # process values branch
@@ -589,12 +595,17 @@ class MLPAttention(nn.Module):
 
         outputs = {}
 
-        for degree, (attn, value, h) in enumerate(zip(attentions, values.values(), self.heads)):
-            value = rearrange(value, 'b i j (h d) m -> b i j h d m', h = h)
-            out = einsum('b i j h, b i j h d m -> b i h d m', attn, value)
-            out = rearrange(out, 'b i h d m -> b i (h d) m')
+        value_einsum_eq = 'b i j h d m' if not one_headed_kv else 'b i j d m'
 
+        for degree, (attn, value, h) in enumerate(zip(attentions, values.values(), self.heads)):
+            if not one_headed_kv:
+                value = rearrange(value, 'b i j (h d) m -> b i j h d m', h = h)
+
+            out = einsum(f'b i j h, {value_einsum_eq} -> b i h d m', attn, value)
+            out = rearrange(out, 'b i h d m -> b i (h d) m')
             outputs[degree] = out
+
+        # combine heads out
 
         return self.to_out(outputs)
 
@@ -626,7 +637,8 @@ class Equiformer(nn.Module):
         embedding_grad_frac = 0.5,
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
         ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
-        dot_product_attention = True
+        dot_product_attention = True,
+        **kwargs
     ):
         super().__init__()
 
@@ -699,7 +711,7 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                attention_klass(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv),
+                attention_klass(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv, **kwargs),
                 FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
             ]))
 
