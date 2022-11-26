@@ -18,6 +18,8 @@ from einops import rearrange, repeat
 
 Return = namedtuple('Return', ['type0', 'type1'])
 
+EdgeInfo = namedtuple('EdgeInfo', ['neighbor_indices', 'neighbor_mask', 'edges'])
+
 # biasless layernorm
 
 class LayerNorm(nn.Module):
@@ -73,6 +75,17 @@ def residual_fn(x, residual):
 
         out[degree] = out[degree] + residual[degree]
     return out
+
+def tuple_set_at_index(tup, index, value):
+    l = list(tup)
+    l[index] = value
+    return tuple(l)
+
+def feature_shapes(feature):
+    return tuple(v.shape for v in feature.values())
+
+def feature_fiber(feature):
+    return tuple(v.shape[-2] for v in feature.values())
 
 # classes
 
@@ -198,7 +211,7 @@ class Conv(nn.Module):
     def forward(
         self,
         inp,
-        edge_info,
+        edge_info: EdgeInfo,
         rel_dist = None,
         basis = None
     ):
@@ -328,11 +341,6 @@ class PairwiseConv(nn.Module):
 
 # feed forwards
 
-def tuple_set_at_index(tup, index, value):
-    l = list(tup)
-    l[index] = value
-    return tuple(l)
-
 @beartype
 class FeedForward(nn.Module):
     def __init__(
@@ -402,10 +410,8 @@ class DotProductAttention(nn.Module):
 
         self.single_headed_kv = single_headed_kv
 
-        if not single_headed_kv:
-            kv_hidden_fiber = tuple(dim * 2 for dim in hidden_fiber)
-        else:
-            kv_hidden_fiber = tuple(dim * 2 for dim in dim_head)
+        kv_hidden_fiber = hidden_fiber if not single_headed_kv else dim_head
+        kv_hidden_fiber = tuple(dim * 2 for dim in kv_hidden_fiber)
 
         self.scale = tuple(dim ** -0.5 for dim in dim_head)
         self.heads = heads
@@ -413,16 +419,21 @@ class DotProductAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
+
         self.to_kv = Conv(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
+        self.to_self_kv = Linear(fiber, kv_hidden_fiber) if attend_self else None
+
         self.to_out = Linear(hidden_fiber, fiber)
 
-        self.attend_self = attend_self
-        if attend_self:
-            self.to_self_kv = Linear(fiber, kv_hidden_fiber)
-
-
-    def forward(self, features, edge_info, rel_dist, basis, mask = None):
-        attend_self, one_head_kv = self.attend_self, self.single_headed_kv
+    def forward(
+        self,
+        features,
+        edge_info: EdgeInfo,
+        rel_dist,
+        basis,
+        mask = None
+    ):
+        attend_self, one_head_kv = exists(self.to_self_kv), self.single_headed_kv
 
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -484,12 +495,108 @@ class MLPAttention(nn.Module):
         heads: Union[int, Tuple[int, ...]] = 8,
         attend_self = False,
         edge_dim = None,
-        splits = 4
+        splits = 4,
+        attn_leakyrelu_slope = 0.1,
+        attn_hidden_dim_mult = 4,
+        **kwargs
     ):
         super().__init__()
+        num_degrees = len(fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis, mask = None):
-        raise NotImplementedError
+        dim_head = cast_tuple(dim_head, num_degrees)
+        assert len(dim_head) == num_degrees
+
+        heads = cast_tuple(heads, num_degrees)
+        assert len(heads) == num_degrees
+
+        hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
+
+        self.scale = tuple(dim ** -0.5 for dim in dim_head)
+        self.heads = heads
+
+        self.prenorm = Norm(fiber)
+
+        # type 0 needs greater dimension, for
+        # (1) gating the htypes on the values branch
+        # (2) attention logits, with dimension equal to heads amount for starters
+
+        type0_dim = hidden_fiber[0]
+        htype_dims = sum(hidden_fiber[1:])
+
+        value_gate_fiber = tuple_set_at_index(hidden_fiber, 0, type0_dim + htype_dims)
+
+        attn_hidden_dims = tuple(head * attn_hidden_dim_mult for head in heads)
+
+        intermediate_fiber = tuple_set_at_index(hidden_fiber, 0, sum(attn_hidden_dims) + type0_dim + htype_dims)
+        self.intermediate_type0_split = [*attn_hidden_dims, type0_dim + htype_dims]
+
+        # main branch tensor product
+
+        self.to_attn_and_v = Conv(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
+
+        # non-linear projection of attention branch into the attention logits
+
+        self.to_attn_logits = nn.ModuleList([
+            nn.Sequential(
+                nn.LeakyReLU(attn_leakyrelu_slope),
+                nn.Linear(attn_hidden_dim, h, bias = False)
+            ) for attn_hidden_dim, h in zip(attn_hidden_dims, self.heads)
+        ])
+
+        # non-linear transform of the value branch
+        # todo - needs a DTP here?
+
+        self.to_values = nn.Sequential(
+            Gate(value_gate_fiber)
+        )
+
+        # combining heads and projection out
+
+        self.to_out = Linear(hidden_fiber, fiber)
+
+    def forward(
+        self,
+        features,
+        edge_info: EdgeInfo,
+        rel_dist,
+        basis,
+        mask = None
+    ):
+        features = self.prenorm(features)
+
+        intermediate = self.to_attn_and_v(features, edge_info, rel_dist, basis)
+
+        *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
+
+        intermediate[0] = value_branch_type0
+
+        # process the attention branch
+
+        attentions = []
+
+        for fn, attn_intermediate, scale in zip(self.to_attn_logits, attn_branch_type0, self.scale):
+            attn_intermediate = rearrange(attn_intermediate, '... 1 -> ...')
+            attn_logits = fn(attn_intermediate)
+            attn_logits = attn_logits * scale
+            attn = attn_logits.softmax(dim = -1) # (batch, source, target, heads)
+            attentions.append(attn)
+
+        # process values branch
+
+        values = self.to_values(intermediate)
+
+        # aggregate values with attention matrix
+
+        outputs = {}
+
+        for degree, (attn, value, h) in enumerate(zip(attentions, values.values(), self.heads)):
+            value = rearrange(value, 'b i j (h d) m -> b i j h d m', h = h)
+            out = einsum('b i j h, b i j h d m -> b i h d m', attn, value)
+            out = rearrange(out, 'b i h d m -> b i (h d) m')
+
+            outputs[degree] = out
+
+        return self.to_out(outputs)
 
 # main class
 
@@ -518,7 +625,8 @@ class Equiformer(nn.Module):
         linear_out = True,
         embedding_grad_frac = 0.5,
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
-        ff_include_htype_norms = False     # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
+        ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
+        dot_product_attention = True
     ):
         super().__init__()
 
@@ -587,9 +695,11 @@ class Equiformer(nn.Module):
 
         self.layers = nn.ModuleList([])
 
+        attention_klass = DotProductAttention if dot_product_attention else MLPAttention
+
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                DotProductAttention(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv),
+                attention_klass(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv),
                 FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
             ]))
 
@@ -709,7 +819,8 @@ class Equiformer(nn.Module):
 
         # main logic
 
-        edge_info = (neighbor_indices, neighbor_mask, edges)
+        edge_info = EdgeInfo(neighbor_indices, neighbor_mask, edges)
+
         x = feats
 
         # project in

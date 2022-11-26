@@ -24,14 +24,14 @@ from equiformer_pytorch import Equiformer
 
 model = Equiformer(
     num_tokens = 24,
-    dim = (4, 4, 2),
-    dim_head = (4, 4, 4),
-    heads = (2, 2, 2),
-    num_degrees = 3,
-    depth = 4,
-    attend_self = True,
-    input_degrees = 1,
-    reduce_dim_out = True
+    dim = (4, 4, 2),               # dimensions per type, ascending, length must match number of degrees (num_degrees)
+    dim_head = (4, 4, 4),          # dimension per attention head
+    heads = (2, 2, 2),             # number of attention heads
+    num_degrees = 3,               # number of degrees
+    depth = 4,                     # depth of equivariant transformer
+    attend_self = True,            # attending to self or not
+    reduce_dim_out = True,         # whether to reduce out to dimension of 1, say for predicting new coordinates for type 1 features
+    dot_product_attention = False  # set to False to try out MLP attention
 ).cuda()
 
 feats = torch.randint(0, 24, (1, 128)).cuda()
@@ -55,6 +55,12 @@ Tests for spherical harmonics, network equivariance etc
 ```bash
 $ python setup.py test
 ```
+
+## Todo
+
+- [ ] figure out DTP heuristic
+- [ ] move self interacting key / value production into Conv, fix no pooling in conv with self interaction
+- [ ] start moving some spherical harmonic stuff to cpp or nim
 
 ## Citations
 
