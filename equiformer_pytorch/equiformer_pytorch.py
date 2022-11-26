@@ -213,7 +213,8 @@ class Conv(nn.Module):
         inp,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None
+        basis = None,
+        neighbors = None
     ):
         splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
@@ -228,6 +229,11 @@ class Conv(nn.Module):
         split_basis_values = list(zip(*list(map(lambda t: fast_split(t, splits, dim = 1), basis.values()))))
         split_basis = list(map(lambda v: dict(zip(basis_keys, v)), split_basis_values))
 
+        # neighbors
+
+        neighbors_separate_embed = exists(neighbors)
+        neighbors = default(neighbors, inp)
+
         # go through every permutation of input degree type to output degree type
 
         for degree_out, _ in enumerate(self.fiber_out):
@@ -236,9 +242,14 @@ class Conv(nn.Module):
             for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
 
-                x = inp[degree_in]
+                xi, xj = inp[degree_in], neighbors[degree_in]
 
-                x = batched_index_select(x, neighbor_indices, dim = 1)
+                x = batched_index_select(xj, neighbor_indices, dim = 1)
+
+                if neighbors_separate_embed:
+                    xi = rearrange(xi, 'b i d m -> b i 1 d m')
+                    x = x + xi
+
                 x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
 
                 kernel_fn = self.kernel_unary[etype]
@@ -534,6 +545,11 @@ class MLPAttention(nn.Module):
         intermediate_fiber = tuple_set_at_index(value_hidden_fiber, 0, sum(attn_hidden_dims) + type0_dim + htype_dims)
         self.intermediate_type0_split = [*attn_hidden_dims, type0_dim + htype_dims]
 
+        # linear project xi and xj separately
+
+        self.to_xi = Linear(fiber, fiber)
+        self.to_xj = Linear(fiber, fiber)
+
         # main branch tensor product
 
         self.to_attn_and_v = Conv(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
@@ -570,7 +586,16 @@ class MLPAttention(nn.Module):
 
         features = self.prenorm(features)
 
-        intermediate = self.to_attn_and_v(features, edge_info, rel_dist, basis)
+        xi = self.to_xi(features)
+        xj = self.to_xj(features)
+
+        intermediate = self.to_attn_and_v(
+            xi,
+            neighbors = xj,
+            edge_info = edge_info,
+            rel_dist = rel_dist,
+            basis = basis
+        )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
 
