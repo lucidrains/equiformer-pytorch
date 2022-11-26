@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from equiformer_pytorch.basis import get_basis
-from equiformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split, rand_uniform, broadcat
+from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
 from einops import rearrange, repeat
 
