@@ -431,6 +431,9 @@ class DotProductAttention(nn.Module):
 
         self.to_q = Linear(fiber, hidden_fiber)
 
+        self.to_xi = Linear(fiber, fiber)
+        self.to_xj = Linear(fiber, fiber)
+
         self.to_kv = Conv(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
         self.to_self_kv = Linear(fiber, kv_hidden_fiber) if attend_self else None
 
@@ -455,7 +458,16 @@ class DotProductAttention(nn.Module):
         features = self.prenorm(features)
 
         queries     = self.to_q(features)
-        keyvalues   = self.to_kv(features, edge_info, rel_dist, basis)
+
+        xi, xj      = self.to_xi(features), self.to_xj(features)
+
+        keyvalues   = self.to_kv(
+            xi,
+            neighbors = xj,
+            edge_info = edge_info,
+            rel_dist = rel_dist,
+            basis = basis
+        )
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
 
