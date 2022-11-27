@@ -108,7 +108,7 @@ class Linear(nn.Module):
         out = {}
 
         for degree, weight in zip(self.degrees, self.weights):
-            out[degree] = einsum('b n d m, d e -> b n e m', x[degree], weight)
+            out[degree] = einsum('... d m, d e -> ... e m', x[degree], weight)
 
         return out
 
@@ -566,6 +566,8 @@ class MLPAttention(nn.Module):
 
         self.to_attn_and_v = Conv(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
 
+        self.post_to_attn_and_v_linear = Linear(intermediate_fiber, intermediate_fiber)
+
         # non-linear projection of attention branch into the attention logits
 
         self.to_attn_logits = nn.ModuleList([
@@ -608,6 +610,8 @@ class MLPAttention(nn.Module):
             rel_dist = rel_dist,
             basis = basis
         )
+
+        intermediate = self.post_to_attn_and_v_linear(intermediate)
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
 
