@@ -179,12 +179,16 @@ class Gate(nn.Module):
         return output
 
 @beartype
-class Conv(nn.Module):
+class TP(nn.Module):
+    """ 'Tensor Product' - in the equivariant sense """
+
     def __init__(
         self,
         fiber_in: Tuple[int, ...],
         fiber_out: Tuple[int, ...],
         self_interaction = True,
+        project_xi_xj = True,   # whether to project xi and xj and then sum, as in paper
+        project_out = True,     # whether to do a project out after the "tensor product"
         pool = True,
         edge_dim = 0,
         splits = 4
@@ -194,27 +198,33 @@ class Conv(nn.Module):
         self.fiber_out = fiber_out
         self.edge_dim = edge_dim
         self.self_interaction = self_interaction
+        self.pool = pool
+        self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
+
+        self.project_xi_xj = project_xi_xj
+        if project_xi_xj:
+            self.to_xi = Linear(fiber_in, fiber_in)
+            self.to_xj = Linear(fiber_in, fiber_in)
 
         self.kernel_unary = nn.ModuleDict()
 
-        self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
-
         for (di, mi), (do, mo) in fiber_product(self.fiber_in, self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
-
-        self.pool = pool
+            self.kernel_unary[f'({di},{do})'] = PairwiseTP(di, mi, do, mo, edge_dim = edge_dim)
 
         if self_interaction:
             assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = Linear(fiber_in, fiber_out)
+
+        self.project_out = project_out
+        if project_out:
+            self.to_out = Linear(fiber_out, fiber_out)
 
     def forward(
         self,
         inp,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None,
-        neighbors = None
+        basis = None
     ):
         splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
@@ -231,8 +241,10 @@ class Conv(nn.Module):
 
         # neighbors
 
-        neighbors_separate_embed = exists(neighbors)
-        neighbors = default(neighbors, inp)
+        if self.project_xi_xj:
+            source, target = self.to_xi(inp), self.to_xj(inp)
+        else:
+            source, target = inp, inp
 
         # go through every permutation of input degree type to output degree type
 
@@ -242,11 +254,11 @@ class Conv(nn.Module):
             for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
 
-                xi, xj = inp[degree_in], neighbors[degree_in]
+                xi, xj = source[degree_in], target[degree_in]
 
                 x = batched_index_select(xj, neighbor_indices, dim = 1)
 
-                if neighbors_separate_embed:
+                if self.project_xi_xj:
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
@@ -280,6 +292,9 @@ class Conv(nn.Module):
             self_interact_out = self.self_interact(inp)
             outputs = residual_fn(outputs, self_interact_out)
 
+        if self.project_out:
+            outputs = self.to_out(outputs)
+
         return outputs
 
 class RadialFunc(nn.Module):
@@ -311,7 +326,7 @@ class RadialFunc(nn.Module):
         y = self.net(x)
         return rearrange(y, '... (o i f) -> ... o 1 i 1 f', i = self.in_dim, o = self.out_dim)
 
-class PairwiseConv(nn.Module):
+class PairwiseTP(nn.Module):
     def __init__(
         self,
         degree_in,
@@ -434,7 +449,7 @@ class DotProductAttention(nn.Module):
         self.to_xi = Linear(fiber, fiber)
         self.to_xj = Linear(fiber, fiber)
 
-        self.to_kv = Conv(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
+        self.to_kv = TP(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
         self.to_self_kv = Linear(fiber, kv_hidden_fiber) if attend_self else None
 
         self.to_out = Linear(hidden_fiber, fiber)
@@ -557,16 +572,9 @@ class MLPAttention(nn.Module):
         intermediate_fiber = tuple_set_at_index(value_hidden_fiber, 0, sum(attn_hidden_dims) + type0_dim + htype_dims)
         self.intermediate_type0_split = [*attn_hidden_dims, type0_dim + htype_dims]
 
-        # linear project xi and xj separately
-
-        self.to_xi = Linear(fiber, fiber)
-        self.to_xj = Linear(fiber, fiber)
-
         # main branch tensor product
 
-        self.to_attn_and_v = Conv(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
-
-        self.post_to_attn_and_v_linear = Linear(intermediate_fiber, intermediate_fiber)
+        self.to_attn_and_v = TP(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
 
         # non-linear projection of attention branch into the attention logits
 
@@ -601,18 +609,12 @@ class MLPAttention(nn.Module):
 
         features = self.prenorm(features)
 
-        xi = self.to_xi(features)
-        xj = self.to_xj(features)
-
         intermediate = self.to_attn_and_v(
-            xi,
-            neighbors = xj,
+            features,
             edge_info = edge_info,
             rel_dist = rel_dist,
             basis = basis
         )
-
-        intermediate = self.post_to_attn_and_v_linear(intermediate)
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
 
@@ -739,11 +741,11 @@ class Equiformer(nn.Module):
 
         # define fibers and dimensionality
 
-        conv_kwargs = dict(edge_dim = edge_dim, splits = splits)
+        tp_kwargs = dict(edge_dim = edge_dim, splits = splits)
 
         # main network
 
-        self.conv_in  = Conv(self.dim_in, self.dim, **conv_kwargs)
+        self.tp_in  = TP(self.dim_in, self.dim, **tp_kwargs)
 
         # trunk
 
@@ -879,7 +881,7 @@ class Equiformer(nn.Module):
 
         # project in
 
-        x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        x = self.tp_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         # transformer layers
 
