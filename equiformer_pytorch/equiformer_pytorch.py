@@ -212,7 +212,6 @@ class TP(nn.Module):
             self.kernel_unary[f'({di},{do})'] = PairwiseTP(di, mi, do, mo, edge_dim = edge_dim)
 
         if self_interaction:
-            assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = Linear(fiber_in, fiber_out)
 
         self.project_out = project_out
@@ -288,13 +287,19 @@ class TP(nn.Module):
 
             outputs[degree_out] = output
 
-        if self.self_interaction:
-            self_interact_out = self.self_interact(inp)
-            outputs = residual_fn(outputs, self_interact_out)
+        if not self.self_interaction and not self.project_out:
+            return outputs
 
         if self.project_out:
             outputs = self.to_out(outputs)
 
+        self_interact_out = self.self_interact(inp)
+
+        if self.pool:
+            return residual_fn(outputs, self_interact_out)
+
+        self_interact_out = {k: rearrange(v, '... d m -> ... 1 d m') for k, v in self_interact_out.items()}
+        outputs = {degree: torch.cat(tensors, dim = -3) for degree, tensors in enumerate(zip(self_interact_out.values(), outputs.values()))}
         return outputs
 
 class RadialFunc(nn.Module):
@@ -445,8 +450,7 @@ class DotProductAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_kv = TP(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
-        self.to_self_kv = Linear(fiber, kv_hidden_fiber) if attend_self else None
+        self.to_kv = TP(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         self.to_out = Linear(hidden_fiber, fiber)
 
@@ -458,7 +462,7 @@ class DotProductAttention(nn.Module):
         basis,
         mask = None
     ):
-        attend_self, one_head_kv = exists(self.to_self_kv), self.single_headed_kv
+        one_head_kv = self.single_headed_kv
 
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -479,9 +483,6 @@ class DotProductAttention(nn.Module):
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
 
-        if attend_self:
-            self_keyvalues = self.to_self_kv(features)
-
         outputs = {}
 
         for degree, h, scale in zip(features.keys(), self.heads, self.scale):
@@ -491,16 +492,6 @@ class DotProductAttention(nn.Module):
 
             if not one_head_kv:
                 kv = rearrange(kv, f'b i j (h d) m -> b h i j d m', h = h)
-
-            if attend_self:
-                self_kv = self_keyvalues[degree]
-
-                if not one_head_kv:
-                    self_kv = rearrange(self_kv, 'b n (h d) m -> b h n 1 d m', h = h)
-                else:
-                    self_kv = rearrange(self_kv, 'b n d m -> b n 1 d m')
-
-                kv = torch.cat((self_kv, kv), dim = -3)
 
             k, v = kv.chunk(2, dim = -2)
 
@@ -567,7 +558,7 @@ class MLPAttention(nn.Module):
 
         # main branch tensor product
 
-        self.to_attn_and_v = TP(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, splits = splits)
+        self.to_attn_and_v = TP(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         # non-linear projection of attention branch into the attention logits
 

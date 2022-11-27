@@ -65,9 +65,9 @@ $ python setup.py test
 ## Todo
 
 - [x] move xi and xj separate project and sum logic into Conv class
+- [x] move self interacting key / value production into Conv, fix no pooling in conv with self interaction
 
 - [ ] figure out DTP heuristic
-- [ ] move self interacting key / value production into Conv, fix no pooling in conv with self interaction
 - [ ] start moving some spherical harmonic stuff to cpp or nim
 
 ## Citations
