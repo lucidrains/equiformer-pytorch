@@ -581,7 +581,8 @@ class MLPAttention(nn.Module):
         # todo - needs a DTP here?
 
         self.to_values = nn.Sequential(
-            Gate(value_gate_fiber)
+            Gate(value_gate_fiber),
+            Linear(value_hidden_fiber, value_hidden_fiber)
         )
 
         # combining heads and projection out
