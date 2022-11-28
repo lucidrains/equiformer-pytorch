@@ -302,33 +302,6 @@ class TP(nn.Module):
         outputs = {degree: torch.cat(tensors, dim = -3) for degree, tensors in enumerate(zip(self_interact_out.values(), outputs.values()))}
         return outputs
 
-class RadialFunc(nn.Module):
-    def __init__(
-        self,
-        num_freq,
-        in_dim,
-        out_dim,
-        edge_dim = None,
-        mid_dim = 64,
-    ):
-        super().__init__()
-        self.in_dim = in_dim
-        self.mid_dim = mid_dim
-        self.out_dim = out_dim
-
-        edge_dim = default(edge_dim, 0)
-
-        self.net = nn.Sequential(
-            nn.Linear(edge_dim + mid_dim, mid_dim),
-            nn.SiLU(),
-            LayerNorm(mid_dim),
-            nn.Linear(mid_dim, num_freq * in_dim * out_dim)
-        )
-
-    def forward(self, x):
-        y = self.net(x)
-        return rearrange(y, '... (o i f) -> ... o 1 i 1 f', i = self.in_dim, o = self.out_dim)
-
 class PairwiseTP(nn.Module):
     def __init__(
         self,
@@ -337,7 +310,7 @@ class PairwiseTP(nn.Module):
         degree_out,
         nc_out,
         edge_dim = 0,
-        radial_hidden_dim = 16
+        radial_hidden_dim = 64
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -349,10 +322,23 @@ class PairwiseTP(nn.Module):
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
-        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, mid_dim = radial_hidden_dim, edge_dim = edge_dim)
+        mid_dim = radial_hidden_dim
+        edge_dim = default(edge_dim, 0)
+
+        self.rp = nn.Sequential(
+            nn.Linear(edge_dim + mid_dim, mid_dim),
+            nn.SiLU(),
+            LayerNorm(mid_dim),
+            nn.Linear(mid_dim, mid_dim),
+            nn.SiLU(),
+            LayerNorm(mid_dim),
+            nn.Linear(mid_dim, self.num_freq * nc_in * nc_out)
+        )
 
     def forward(self, feat, basis):
         R = self.rp(feat)
+        R = rearrange(R, '... (o i f) -> ... o 1 i 1 f', i = self.nc_in, o = self.nc_out)
+
         B = basis[f'{self.degree_in},{self.degree_out}']
 
         out_shape = (*R.shape[:3], self.d_out * self.nc_out, -1)
@@ -425,7 +411,7 @@ class DotProductAttention(nn.Module):
         attend_self = False,
         edge_dim = None,
         single_headed_kv = False,
-        radial_hidden_dim = 16,
+        radial_hidden_dim = 64,
         splits = 4
     ):
         super().__init__()
