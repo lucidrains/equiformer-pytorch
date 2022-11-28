@@ -13,6 +13,7 @@ from equiformer_pytorch.basis import get_basis
 from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
 from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
 
 # constants
 
@@ -286,7 +287,7 @@ class TP(nn.Module):
                 output = output + output_chunk
 
             if self.pool:
-                output = masked_mean(output, neighbor_masks, dim = 2) if exists(neighbor_masks) else output.mean(dim = 2)
+                output = masked_mean(output, neighbor_masks, dim = 2)
 
             leading_shape = x.shape[:2] if self.pool else x.shape[:3]
             output = output.view(*leading_shape, -1, to_order(degree_out))
@@ -340,12 +341,12 @@ class PairwiseTP(nn.Module):
                 nn.SiLU()
             )),
             LayerNorm(mid_dim),
-            nn.Linear(mid_dim, self.num_freq * nc_in * nc_out)
+            nn.Linear(mid_dim, self.num_freq * nc_in * nc_out),
+            Rearrange('... (o i f) -> ... o 1 i 1 f', i = nc_in, o = nc_out)
         )
 
     def forward(self, feat, basis):
         R = self.rp(feat)
-        R = rearrange(R, '... (o i f) -> ... o 1 i 1 f', i = self.nc_in, o = self.nc_out)
 
         B = basis[f'{self.degree_in},{self.degree_out}']
 
@@ -911,7 +912,7 @@ class Equiformer(nn.Module):
             x = {k: rearrange(v, '... 1 c -> ... c') for k, v in x.items()}
 
         if return_pooled:
-            mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
+            mask_fn = (lambda t: masked_mean(t, _mask, dim = 1))
             x = {k: mask_fn(v) for k, v in x.items()}
 
         # just return type 0 and type 1 features, reduced or not

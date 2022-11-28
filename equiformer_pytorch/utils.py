@@ -57,6 +57,9 @@ def fast_split(arr, splits, dim=0):
         s += chunk_size + adjust
 
 def masked_mean(tensor, mask, dim = -1):
+    if not exists(mask):
+        return tensor.mean(dim = dim)
+
     diff_len = len(tensor.shape) - len(mask.shape)
     mask = mask[(..., *((None,) * diff_len))]
     tensor.masked_fill_(~mask, 0.)
