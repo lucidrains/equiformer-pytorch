@@ -707,8 +707,7 @@ class Equiformer(nn.Module):
         self.to_rel_dist_hidden = nn.Sequential(
             nn.Linear(1, radial_hidden_dim),
             nn.SiLU(),
-            LayerNorm(radial_hidden_dim),
-            nn.Linear(radial_hidden_dim, radial_hidden_dim),
+            LayerNorm(radial_hidden_dim)
         )
 
         # whether to differentiate through basis, needed gradients for iterative refinement

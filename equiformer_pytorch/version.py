@@ -1,3 +1,3 @@
-__version__ = '0.0.24'
+__version__ = '0.0.25'
 
 __cuda_pkg_name__ = f'equiformer_pytorch_cuda_{__version__.replace(".", "_")}'
