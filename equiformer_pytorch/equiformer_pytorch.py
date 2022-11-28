@@ -20,17 +20,6 @@ Return = namedtuple('Return', ['type0', 'type1'])
 
 EdgeInfo = namedtuple('EdgeInfo', ['neighbor_indices', 'neighbor_mask', 'edges'])
 
-# biasless layernorm
-
-class LayerNorm(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(dim))
-        self.register_buffer("beta", torch.zeros(dim))
-
-    def forward(self, x):
-        return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
-
 # fiber functions
 
 @beartype
@@ -88,6 +77,23 @@ def feature_fiber(feature):
     return tuple(v.shape[-2] for v in feature.values())
 
 # classes
+
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(x, **kwargs) + x
+
+class LayerNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(dim))
+        self.register_buffer("beta", torch.zeros(dim))
+
+    def forward(self, x):
+        return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
 
 @beartype
 class Linear(nn.Module):
@@ -328,9 +334,11 @@ class PairwiseTP(nn.Module):
         self.rp = nn.Sequential(
             nn.Linear(edge_dim + mid_dim, mid_dim),
             nn.SiLU(),
-            LayerNorm(mid_dim),
-            nn.Linear(mid_dim, mid_dim),
-            nn.SiLU(),
+            Residual(nn.Sequential(
+                LayerNorm(mid_dim),
+                nn.Linear(mid_dim, mid_dim),
+                nn.SiLU()
+            )),
             LayerNorm(mid_dim),
             nn.Linear(mid_dim, self.num_freq * nc_in * nc_out)
         )
