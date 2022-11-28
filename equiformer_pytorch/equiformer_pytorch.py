@@ -191,6 +191,7 @@ class TP(nn.Module):
         project_out = True,     # whether to do a project out after the "tensor product"
         pool = True,
         edge_dim = 0,
+        radial_hidden_dim = 16,
         splits = 4
     ):
         super().__init__()
@@ -209,7 +210,7 @@ class TP(nn.Module):
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in fiber_product(self.fiber_in, self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseTP(di, mi, do, mo, edge_dim = edge_dim)
+            self.kernel_unary[f'({di},{do})'] = PairwiseTP(di, mi, do, mo, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
 
         if self_interaction:
             self.self_interact = Linear(fiber_in, fiber_out)
@@ -227,7 +228,6 @@ class TP(nn.Module):
     ):
         splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
-        rel_dist = rearrange(rel_dist, 'b m n -> b m n 1')
 
         kernels = {}
         outputs = {}
@@ -309,19 +309,17 @@ class RadialFunc(nn.Module):
         in_dim,
         out_dim,
         edge_dim = None,
-        mid_dim = 128
+        mid_dim = 64,
     ):
         super().__init__()
-        self.num_freq = num_freq
         self.in_dim = in_dim
         self.mid_dim = mid_dim
         self.out_dim = out_dim
 
+        edge_dim = default(edge_dim, 0)
+
         self.net = nn.Sequential(
-            nn.Linear(default(edge_dim, 0) + 1, mid_dim),
-            nn.SiLU(),
-            LayerNorm(mid_dim),
-            nn.Linear(mid_dim, mid_dim),
+            nn.Linear(edge_dim + mid_dim, mid_dim),
             nn.SiLU(),
             LayerNorm(mid_dim),
             nn.Linear(mid_dim, num_freq * in_dim * out_dim)
@@ -338,7 +336,8 @@ class PairwiseTP(nn.Module):
         nc_in,
         degree_out,
         nc_out,
-        edge_dim = 0
+        edge_dim = 0,
+        radial_hidden_dim = 16
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -350,7 +349,7 @@ class PairwiseTP(nn.Module):
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
-        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
+        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, mid_dim = radial_hidden_dim, edge_dim = edge_dim)
 
     def forward(self, feat, basis):
         R = self.rp(feat)
@@ -426,6 +425,7 @@ class DotProductAttention(nn.Module):
         attend_self = False,
         edge_dim = None,
         single_headed_kv = False,
+        radial_hidden_dim = 16,
         splits = 4
     ):
         super().__init__()
@@ -450,7 +450,7 @@ class DotProductAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_kv = TP(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_kv = TP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         self.to_out = Linear(hidden_fiber, fiber)
 
@@ -521,6 +521,7 @@ class MLPAttention(nn.Module):
         single_headed_kv = False,
         attn_leakyrelu_slope = 0.1,
         attn_hidden_dim_mult = 4,
+        radial_hidden_dim = 16,
         **kwargs
     ):
         super().__init__()
@@ -558,7 +559,7 @@ class MLPAttention(nn.Module):
 
         # main branch tensor product
 
-        self.to_attn_and_v = TP(fiber, intermediate_fiber, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_attn_and_v = TP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         # non-linear projection of attention branch into the attention logits
 
@@ -654,6 +655,7 @@ class Equiformer(nn.Module):
         valid_radius = 1e5,
         num_neighbors = float('inf'),
         reduce_dim_out = False,
+        radial_hidden_dim = 64,
         num_tokens = None,
         num_positions = None,
         num_edge_tokens = None,
@@ -709,12 +711,21 @@ class Equiformer(nn.Module):
 
         # edges
 
-        assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
+        assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if equiformer is to have edge tokens'
 
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
 
-        # whether to differentiate through basis, needed for alphafold2
+        # initial MLP of relative distances to intermediate representation, akin to time conditioning in ddpm unets
+
+        self.to_rel_dist_hidden = nn.Sequential(
+            nn.Linear(1, radial_hidden_dim),
+            nn.SiLU(),
+            LayerNorm(radial_hidden_dim),
+            nn.Linear(radial_hidden_dim, radial_hidden_dim),
+        )
+
+        # whether to differentiate through basis, needed gradients for iterative refinement
 
         self.differentiable_coors = differentiable_coors
 
@@ -723,13 +734,15 @@ class Equiformer(nn.Module):
         self.valid_radius = valid_radius
         self.num_neighbors = num_neighbors
 
-        # define fibers and dimensionality
-
-        tp_kwargs = dict(edge_dim = edge_dim, splits = splits)
-
         # main network
 
-        self.tp_in  = TP(self.dim_in, self.dim, **tp_kwargs)
+        self.tp_in  = TP(
+            self.dim_in,
+            self.dim,
+            edge_dim = edge_dim,
+            radial_hidden_dim = radial_hidden_dim,
+            splits = splits
+        )
 
         # trunk
 
@@ -739,7 +752,17 @@ class Equiformer(nn.Module):
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
-                attention_klass(self.dim, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, splits = splits, single_headed_kv = single_headed_kv, **kwargs),
+                attention_klass(
+                    self.dim,
+                    heads = heads,
+                    dim_head = dim_head,
+                    attend_self = attend_self,
+                    edge_dim = edge_dim,
+                    splits = splits,
+                    single_headed_kv = single_headed_kv,
+                    radial_hidden_dim = radial_hidden_dim,
+                    **kwargs
+                ),
                 FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
             ]))
 
@@ -784,7 +807,7 @@ class Equiformer(nn.Module):
 
         num_degrees, neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.valid_radius
 
-        # se3 transformer by default cannot have a node attend to itself
+        # cannot have a node attend to itself
 
         exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> 1 i j')
         remove_self = lambda t: t.masked_select(exclude_self_mask).reshape(b, n, n - 1)
@@ -852,6 +875,10 @@ class Equiformer(nn.Module):
 
         if exists(edges):
             edges = batched_index_select(edges, nearest_indices, dim = 2)
+
+        # embed relative distances
+
+        neighbor_rel_dist = self.to_rel_dist_hidden(rearrange(neighbor_rel_dist, '... -> ... 1'))
 
         # calculate basis
 
