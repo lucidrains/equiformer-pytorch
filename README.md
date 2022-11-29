@@ -14,7 +14,7 @@ Update: The choice of the norm or gating (still need to ablate to figure out whi
 
 Update: Nevermind, MLP attention seems to be working, but about the same as dot product attention.
 
-Update: By using the negative of the euclidean distance for dot product of higher types in dot product attention, I now see results that are far better than before as well as MLP attention. My conclusion is that the choice of norm and gating is contributing way more to the results in the paper than MLP attention
+Update: By using the negative of the euclidean distance for dot product of higher types in dot product attention (as done in the coordinate branch of <a href="https://github.com/lucidrains/invariant-point-attention/blob/main/invariant_point_attention/invariant_point_attention.py#L175">IPA</a> of alphafold2), I now see results that are far better than before as well as MLP attention. My conclusion is that the choice of norm and gating is contributing way more to the results in the paper than MLP attention
 
 <a href="https://wandb.ai/lucidrains/equiformer/reports/equiformer-and-mlp-attention---VmlldzozMDQwMTY3?accessToken=xmj0a1c80m8hehylrmbr0hndka8kk1vxmdrmvtmy7r1qgphtnuhq1643cb76zgfo">Running experiment, denoising residue positions in protein sequence</a>
 
