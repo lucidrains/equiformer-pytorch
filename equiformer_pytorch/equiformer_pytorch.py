@@ -1,5 +1,4 @@
 from math import sqrt
-from functools import partial
 from itertools import product
 from collections import namedtuple
 
@@ -422,8 +421,7 @@ class DotProductAttention(nn.Module):
         edge_dim = None,
         single_headed_kv = False,
         radial_hidden_dim = 64,
-        splits = 4,
-        tensor_producted_queries = False
+        splits = 4
     ):
         super().__init__()
         num_degrees = len(fiber)
@@ -446,18 +444,8 @@ class DotProductAttention(nn.Module):
 
         self.prenorm = Norm(fiber)
 
-        self.tensor_producted_queries = tensor_producted_queries
-
-
+        self.to_q = Linear(fiber, hidden_fiber)
         self.to_kv = TP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
-
-        if not tensor_producted_queries:
-            self.to_q = Linear(fiber, hidden_fiber)
-        else:
-            self.to_q = TP(fiber, hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = True, self_interaction = attend_self, splits = splits)
-
-            # the 'keys' (xj) of the queries tensor product is equal to the 'keys' (xi) if the to_keyvalues tensor product
-            self.to_q.to_xj = self.to_kv.to_xi
 
         self.to_out = Linear(hidden_fiber, fiber)
 
@@ -479,17 +467,14 @@ class DotProductAttention(nn.Module):
 
         features = self.prenorm(features)
 
-        tp_kwargs = dict(
+        queries     = self.to_q(features)
+
+        keyvalues   = self.to_kv(
+            features,
             edge_info = edge_info,
             rel_dist = rel_dist,
             basis = basis
         )
-
-        to_q_kwargs = tp_kwargs if self.tensor_producted_queries else dict()
-
-        queries = self.to_q(features, **to_q_kwargs)
-
-        keyvalues = self.to_kv(features, **tp_kwargs)
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
 
@@ -678,7 +663,6 @@ class Equiformer(nn.Module):
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
         ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
         dot_product_attention = True,
-        dot_product_attention_tensor_producted_queries = False,
         **kwargs
     ):
         super().__init__()
@@ -758,7 +742,7 @@ class Equiformer(nn.Module):
 
         self.layers = nn.ModuleList([])
 
-        attention_klass = partial(DotProductAttention, tensor_producted_queries = dot_product_attention_tensor_producted_queries) if dot_product_attention else MLPAttention
+        attention_klass = DotProductAttention if dot_product_attention else MLPAttention
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
