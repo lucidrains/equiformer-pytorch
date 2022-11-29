@@ -68,6 +68,7 @@ $ python setup.py test
 - [x] move self interacting key / value production into Conv, fix no pooling in conv with self interaction
 - [x] go with a naive way to split up contribution from input degrees for DTP
 
+- [ ] for dot product attention in higher types, try euclidean distance optionally followed by projection, before attending
 - [ ] start moving some spherical harmonic stuff to cpp or nim
 - [ ] add memory checkpointing for the entire DTP module
 
