@@ -350,13 +350,11 @@ class PairwiseTP(nn.Module):
         edge_dim = default(edge_dim, 0)
 
         self.rp = nn.Sequential(
-            nn.Linear(edge_dim + mid_dim, mid_dim),
+            nn.Linear(edge_dim + 1, mid_dim),
             nn.SiLU(),
-            Residual(nn.Sequential(
-                LayerNorm(mid_dim),
-                nn.Linear(mid_dim, mid_dim),
-                nn.SiLU()
-            )),
+            LayerNorm(mid_dim),
+            nn.Linear(mid_dim, mid_dim),
+            nn.SiLU(),
             LayerNorm(mid_dim),
             nn.Linear(mid_dim, self.num_freq * nc_in * nc_out),
             Rearrange('... (o i f) -> ... o 1 i 1 f', i = nc_in, o = nc_out)
@@ -729,14 +727,6 @@ class Equiformer(nn.Module):
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
 
-        # initial MLP of relative distances to intermediate representation, akin to time conditioning in ddpm unets
-
-        self.to_rel_dist_hidden = nn.Sequential(
-            nn.Linear(1, radial_hidden_dim),
-            nn.SiLU(),
-            LayerNorm(radial_hidden_dim)
-        )
-
         # whether to differentiate through basis, needed gradients for iterative refinement
 
         self.differentiable_coors = differentiable_coors
@@ -890,7 +880,7 @@ class Equiformer(nn.Module):
 
         # embed relative distances
 
-        neighbor_rel_dist = self.to_rel_dist_hidden(rearrange(neighbor_rel_dist, '... -> ... 1'))
+        neighbor_rel_dist = rearrange(neighbor_rel_dist, '... -> ... 1')
 
         # calculate basis
 
