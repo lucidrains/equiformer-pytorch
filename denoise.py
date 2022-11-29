@@ -22,9 +22,9 @@ def cycle(loader, len_thres = MAX_SEQ_LEN):
 
 transformer = Equiformer(
     num_tokens = 24,
-    dim = (8, 4),
-    dim_head = (8, 4),
-    heads = (2, 1),
+    dim = (16, 8),
+    dim_head = (16, 8),
+    heads = (2, 2),
     depth = 4,
     attend_self = True,
     reduce_dim_out = True,
