@@ -51,6 +51,15 @@ def fiber_and(
 
 # helper functions
 
+def split_num_into_groups(num, groups):
+    num_per_group = (num + groups - 1) // groups
+    remainder = num % groups
+
+    if remainder == 0:
+        return (num_per_group,) * groups
+
+    return (*((num_per_group,) * remainder), *((((num_per_group - 1),) * (groups - remainder))))
+
 def get_tensor_device_and_dtype(features):
     _, first_tensor = next(iter(features.items()))
     return first_tensor.device, first_tensor.dtype
@@ -186,7 +195,7 @@ class Gate(nn.Module):
         return output
 
 @beartype
-class TP(nn.Module):
+class DTP(nn.Module):
     """ 'Tensor Product' - in the equivariant sense """
 
     def __init__(
@@ -216,8 +225,16 @@ class TP(nn.Module):
 
         self.kernel_unary = nn.ModuleDict()
 
-        for (di, mi), (do, mo) in fiber_product(self.fiber_in, self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseTP(di, mi, do, mo, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
+        # in the depthwise tensor product, each channel of the output only gets contribution from one degree of the input (please email me if i misconstrued this)
+
+        for degree_out, dim_out in enumerate(self.fiber_out):
+            num_degrees_in = len(self.fiber_in)
+            split_dim_out = split_num_into_groups(dim_out, num_degrees_in)  # returns a tuple of ints representing how many channels come from each input degree
+
+            for degree_in, (dim_in, dim_out_from_degree_in) in enumerate(zip(self.fiber_in, split_dim_out)):
+                self.kernel_unary[f'({degree_in},{degree_out})'] = PairwiseTP(degree_in, dim_in, degree_out, dim_out_from_degree_in, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
+
+        # whether a single token is self-interacting
 
         if self_interaction:
             self.self_interact = Linear(fiber_in, fiber_out)
@@ -255,7 +272,7 @@ class TP(nn.Module):
         # go through every permutation of input degree type to output degree type
 
         for degree_out, _ in enumerate(self.fiber_out):
-            output = 0
+            output = None
 
             for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
@@ -284,7 +301,7 @@ class TP(nn.Module):
                     chunk = einsum('... o i, ... i c -> ... o c', kernel, x_chunk)
                     output_chunk = safe_cat(output_chunk, chunk, dim = 1)
 
-                output = output + output_chunk
+                output = safe_cat(output, output_chunk, dim = -2)
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
@@ -435,6 +452,7 @@ class DotProductAttention(nn.Module):
         hidden_fiber = tuple(dim * head for dim, head in zip(dim_head, heads))
 
         self.single_headed_kv = single_headed_kv
+        self.attend_self = attend_self
 
         kv_hidden_fiber = hidden_fiber if not single_headed_kv else dim_head
         kv_hidden_fiber = tuple(dim * 2 for dim in kv_hidden_fiber)
@@ -445,7 +463,7 @@ class DotProductAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_kv = TP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         self.to_out = Linear(hidden_fiber, fiber)
 
@@ -467,7 +485,7 @@ class DotProductAttention(nn.Module):
 
         features = self.prenorm(features)
 
-        queries     = self.to_q(features)
+        queries = self.to_q(features)
 
         keyvalues   = self.to_kv(
             features,
@@ -493,8 +511,8 @@ class DotProductAttention(nn.Module):
             sim = einsum(f'b h i d m, {kv_einsum_eq} -> b h i j', q, k) * scale
 
             if exists(neighbor_mask):
-                num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
-                mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
+                left_pad_needed = int(self.attend_self)
+                mask = F.pad(neighbor_mask, (left_pad_needed, 0), value = True)
                 sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
@@ -554,7 +572,7 @@ class MLPAttention(nn.Module):
 
         # main branch tensor product
 
-        self.to_attn_and_v = TP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_attn_and_v = DTP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
 
         # non-linear projection of attention branch into the attention logits
 
@@ -730,7 +748,7 @@ class Equiformer(nn.Module):
 
         # main network
 
-        self.tp_in  = TP(
+        self.tp_in  = DTP(
             self.dim_in,
             self.dim,
             edge_dim = edge_dim,
