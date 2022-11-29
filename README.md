@@ -69,6 +69,7 @@ $ python setup.py test
 - [x] go with a naive way to split up contribution from input degrees for DTP
 
 - [ ] start moving some spherical harmonic stuff to cpp or nim
+- [ ] add memory checkpointing for the entire DTP module
 
 ## Citations
 
