@@ -73,6 +73,8 @@ $ python setup.py test
 
 - [ ] start moving some spherical harmonic stuff to cpp or nim
 - [ ] add memory checkpointing for the entire DTP module
+- [ ] rotate in the relative distances into type0 dot product, as was done <a href="https://github.com/lucidrains/En-transformer">here</a>
+- [ ] consider a all-neighbors attention layer just for type0, but also incorporating in the norms of the higher types
 
 ## Citations
 
