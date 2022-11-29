@@ -1,4 +1,5 @@
 from math import sqrt
+from functools import partial
 from itertools import product
 from collections import namedtuple
 
@@ -12,7 +13,7 @@ from torch import nn, einsum
 from equiformer_pytorch.basis import get_basis
 from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
-from einops import rearrange, repeat
+from einops import rearrange, repeat, pack, unpack
 from einops.layers.torch import Rearrange
 
 # constants
@@ -436,6 +437,7 @@ class DotProductAttention(nn.Module):
         edge_dim = None,
         single_headed_kv = False,
         radial_hidden_dim = 64,
+        use_cdist_sim = True,
         splits = 4
     ):
         super().__init__()
@@ -451,6 +453,7 @@ class DotProductAttention(nn.Module):
 
         self.single_headed_kv = single_headed_kv
         self.attend_self = attend_self
+        self.use_cdist_sim = use_cdist_sim
 
         kv_hidden_fiber = hidden_fiber if not single_headed_kv else dim_head
         kv_hidden_fiber = tuple(dim * 2 for dim in kv_hidden_fiber)
@@ -506,7 +509,14 @@ class DotProductAttention(nn.Module):
 
             k, v = kv.chunk(2, dim = -2)
 
-            sim = einsum(f'b h i d m, {kv_einsum_eq} -> b h i j', q, k) * scale
+            if degree == 0 or not self.use_cdist_sim:
+                sim = einsum(f'b h i d m, {kv_einsum_eq} -> b h i j', q, k) * scale
+            else:
+                if one_head_kv:
+                    k = repeat(k, 'b i j d m -> b h i j d m', h = h)
+
+                q = rearrange(q, 'b h i d m -> b h i 1 d m')
+                sim = -((q - k) ** 2).sum(dim = -1).clamp(min = 1e-5).sqrt().sum(dim = -1) * scale
 
             if exists(neighbor_mask):
                 left_pad_needed = int(self.attend_self)
@@ -679,6 +689,7 @@ class Equiformer(nn.Module):
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
         ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
         dot_product_attention = True,
+        dot_product_attention_use_cdist_sim = True,
         **kwargs
     ):
         super().__init__()
@@ -750,7 +761,7 @@ class Equiformer(nn.Module):
 
         self.layers = nn.ModuleList([])
 
-        attention_klass = DotProductAttention if dot_product_attention else MLPAttention
+        attention_klass = partial(DotProductAttention, use_cdist_sim = dot_product_attention_use_cdist_sim) if dot_product_attention else MLPAttention
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([
