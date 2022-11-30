@@ -64,6 +64,20 @@ Tests for spherical harmonics, network equivariance etc
 $ python setup.py test
 ```
 
+## Example
+
+First install `sidechainnet`
+
+```bash
+$ pip install sidechainnet
+```
+
+Then run the protein backbone denoising task
+
+```bash
+$ python denoise.py
+```
+
 ## Todo
 
 - [x] move xi and xj separate project and sum logic into Conv class
