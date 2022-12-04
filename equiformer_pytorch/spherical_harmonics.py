@@ -68,7 +68,7 @@ def lpmv(l, m, x):
         y -= ((l+m_abs-1)/(l-m_abs)) * CACHE[(l-2, m_abs)]
     
     if m < 0:
-        y = self.negative_lpmv(l, m, y)
+        y = negative_lpmv(l, m, y)
     return y
 
 def get_spherical_harmonics_element(l, m, theta, phi):

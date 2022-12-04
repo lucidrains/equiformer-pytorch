@@ -22,7 +22,7 @@ except:
     Jd = list(map(torch.from_numpy, Jd_np))
 
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
-    """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""
+    """Create wigner D matrices for batch of ZYZ Euler angles for degree l."""
     J = Jd[degree].type(dtype).to(device)
     order = to_order(degree)
     x_a = z_rot_mat(alpha, degree)
@@ -62,7 +62,7 @@ def rot_z(gamma):
         [cos(gamma), -sin(gamma), 0],
         [sin(gamma), cos(gamma), 0],
         [0, 0, 1]
-    ], dtype=gamma.dtype)
+    ], dtype=gamma.dtype, device=gamma.device)
 
 @cast_torch_tensor
 def rot_y(beta):
@@ -73,7 +73,7 @@ def rot_y(beta):
         [cos(beta), 0, sin(beta)],
         [0, 1, 0],
         [-sin(beta), 0, cos(beta)]
-    ], dtype=beta.dtype)
+    ], dtype=beta.dtype, device=gamma.device)
 
 @cast_torch_tensor
 def x_to_alpha_beta(x):
@@ -81,8 +81,9 @@ def x_to_alpha_beta(x):
     Convert point (x, y, z) on the sphere into (alpha, beta)
     '''
     x = x / torch.norm(x)
-    beta = acos(x[2])
-    alpha = atan2(x[1], x[0])
+    a0, a1, b1 = x.unbind(dim=0)
+    beta = acos(b1)
+    alpha = atan2(a1, a0)
     return (alpha, beta)
 
 def rot(alpha, beta, gamma):
@@ -96,7 +97,7 @@ def compose(a1, b1, c1, a2, b2, c2):
     (a, b, c) = (a1, b1, c1) composed with (a2, b2, c2)
     """
     comp = rot(a1, b1, c1) @ rot(a2, b2, c2)
-    xyz = comp @ torch.tensor([0, 0, 1.])
+    xyz = comp @ torch.tensor([0, 0, 1.], device=comp.device, dtype=comp.dtype)
     a, b = x_to_alpha_beta(xyz)
     rotz = rot(0, -b, -a) @ comp
     c = atan2(rotz[1, 0], rotz[0, 0])

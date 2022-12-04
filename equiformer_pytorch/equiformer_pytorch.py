@@ -73,7 +73,12 @@ def residual_fn(x, residual):
         if degree not in residual:
             continue
 
-        out[degree] = out[degree] + residual[degree]
+        # saves mem with in-place if no grads involved
+        if not out[degree].requires_grad and not residual[degree].requires_grad:
+            out[degree] += residual[degree]
+        else: # general, safe case
+            out[degree] = out[degree] + residual[degree]
+
     return out
 
 def tuple_set_at_index(tup, index, value):
@@ -98,7 +103,10 @@ class Residual(nn.Module):
         self.fn = fn
 
     def forward(self, x, **kwargs):
-        return self.fn(x, **kwargs) + x
+        y = self.fn(x, **kwargs)
+        if not y.requires_grad and not x.requires_grad:
+            return x.add_(y)
+        return x + y
 
 class LayerNorm(nn.Module):
     def __init__(self, dim):
