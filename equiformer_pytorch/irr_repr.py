@@ -22,7 +22,7 @@ except:
     Jd = list(map(torch.from_numpy, Jd_np))
 
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
-    """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""
+    """Create wigner D matrices for batch of ZYZ Euler angles for degree l."""
     J = Jd[degree].type(dtype).to(device)
     order = to_order(degree)
     x_a = z_rot_mat(alpha, degree)
