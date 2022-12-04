@@ -73,7 +73,7 @@ def rot_y(beta):
         [cos(beta), 0, sin(beta)],
         [0, 1, 0],
         [-sin(beta), 0, cos(beta)]
-    ], dtype=beta.dtype, device=gamma.device)
+    ], dtype=beta.dtype, device=beta.device)
 
 @cast_torch_tensor
 def x_to_alpha_beta(x):
