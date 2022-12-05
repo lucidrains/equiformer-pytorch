@@ -18,6 +18,8 @@ Update: By using the negative of the euclidean distance for dot product of highe
 
 <a href="https://wandb.ai/lucidrains/equiformer/reports/equiformer-and-mlp-attention---VmlldzozMDQwMTY3?accessToken=xmj0a1c80m8hehylrmbr0hndka8kk1vxmdrmvtmy7r1qgphtnuhq1643cb76zgfo">Running experiment, denoising residue positions in protein sequence</a>
 
+If you see a signal with this architecture, please consider sharing your findings at <a href="https://openbioml.org/">OpenBioML</a>
+
 ## Install
 
 ```bash
