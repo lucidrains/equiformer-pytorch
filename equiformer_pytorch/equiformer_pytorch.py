@@ -3,7 +3,7 @@ from functools import partial
 from itertools import product
 from collections import namedtuple
 
-from typing import Optional, Union, Tuple
+from beartype.typing import Optional, Union, Tuple
 from beartype import beartype
 
 import torch
