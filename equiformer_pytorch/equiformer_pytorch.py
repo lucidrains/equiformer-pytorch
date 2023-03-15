@@ -22,6 +22,14 @@ Return = namedtuple('Return', ['type0', 'type1'])
 
 EdgeInfo = namedtuple('EdgeInfo', ['neighbor_indices', 'neighbor_mask', 'edges'])
 
+# helpers
+
+def pack_one(t, pattern):
+    return pack([t], pattern)
+
+def unpack_one(t, ps, pattern):
+    return unpack(t, ps, pattern)[0]
+
 # fiber functions
 
 @beartype
@@ -93,7 +101,13 @@ def feature_fiber(feature):
     return tuple(v.shape[-2] for v in feature.values())
 
 def cdist(a, b, dim = -1, eps = 1e-5):
-    return ((a - b) ** 2).sum(dim = dim).clamp(min = eps).sqrt()
+    a = a.expand_as(b)
+    a, _ = pack_one(a, '* c')
+    b, ps = pack_one(b, '* c')
+
+    dist = F.pairwise_distance(a, b, p = 2)
+    dist = unpack_one(dist, ps, '*')
+    return dist
 
 # classes
 
