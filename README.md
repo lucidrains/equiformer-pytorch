@@ -138,3 +138,12 @@ $ python denoise.py
     primaryClass = {cs.CV}
 }
 ```
+
+```bibtex
+@inproceedings{Kim2020TheLC,
+    title   = {The Lipschitz Constant of Self-Attention},
+    author  = {Hyunjik Kim and George Papamakarios and Andriy Mnih},
+    booktitle = {International Conference on Machine Learning},
+    year    = {2020}
+}
+```

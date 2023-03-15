@@ -523,6 +523,8 @@ class DotProductAttention(nn.Module):
         outputs = {}
 
         for degree, h, scale in zip(features.keys(), self.heads, self.scale):
+            is_degree_zero = degree == 0
+
             q, kv = map(lambda t: t[degree], (queries, keyvalues))
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
@@ -532,14 +534,18 @@ class DotProductAttention(nn.Module):
 
             k, v = kv.chunk(2, dim = -2)
 
-            if degree == 0:
-                sim = einsum(f'b h i d m, {kv_einsum_eq} -> b h i j', q, k) * scale
-            else:
-                if one_head_kv:
-                    k = repeat(k, 'b i j d m -> b h i j d m', h = h)
+            if one_head_kv:
+                k = repeat(k, 'b i j d m -> b h i j d m', h = h)
 
-                q = rearrange(q, 'b h i d m -> b h i 1 d m')
-                sim = -cdist(q, k).sum(dim = -1) * scale
+            q = repeat(q, 'b h i d m -> b h i j d m', j = k.shape[-3])
+
+            if is_degree_zero:
+                q, k = map(lambda t: rearrange(t, '... 1 -> ...'), (q, k))
+
+            sim = -cdist(q, k) * scale
+
+            if not is_degree_zero:
+                sim = sim.sum(dim = -1)
 
             if exists(neighbor_mask):
                 left_pad_needed = int(self.attend_self)
