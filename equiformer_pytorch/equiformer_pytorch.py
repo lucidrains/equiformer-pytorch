@@ -449,10 +449,50 @@ class FeedForward(nn.Module):
         outputs = self.project_out(outputs)
         return outputs
 
+# global linear attention
+
+class LinearAttention(nn.Module):
+    def __init__(
+        self,
+        dim,
+        dim_head = 64,
+        heads = 8
+    ):
+        super().__init__()
+        self.heads = heads
+        dim_inner = dim_head * heads
+        self.to_qkv = nn.Linear(dim, dim_inner * 3)
+
+    def forward(self, x, mask = None):
+        has_degree_m_dim = x.ndim == 4
+
+        if has_degree_m_dim:
+            x = rearrange(x, '... 1 -> ...')
+
+        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), (q, k, v))
+
+        if exists(mask):
+            mask = rearrange(mask, 'b n -> b 1 n 1')
+            k = k.masked_fill(~mask, -torch.finfo(q.dtype).max)
+            v = v.masked_fill(~mask, 0.)
+
+        k = k.softmax(dim = -2)
+        q = q.softmax(dim = -1)
+
+        kv = einsum('b h n d, b h n e -> b h d e', k, v)
+        out = einsum('b h d e, b h n d -> b h n e', kv, q)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+
+        if has_degree_m_dim:
+            out = rearrange(out, '... -> ... 1')
+
+        return out
+
 # attention
 
 @beartype
-class DotProductAttention(nn.Module):
+class L2DistAttention(nn.Module):
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -462,7 +502,8 @@ class DotProductAttention(nn.Module):
         edge_dim = None,
         single_headed_kv = False,
         radial_hidden_dim = 64,
-        splits = 4
+        splits = 4,
+        num_linear_attn_heads = 0
     ):
         super().__init__()
         num_degrees = len(fiber)
@@ -488,6 +529,15 @@ class DotProductAttention(nn.Module):
 
         self.to_q = Linear(fiber, hidden_fiber)
         self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+
+        # linear attention heads
+
+        self.has_linear_attn = num_linear_attn_heads > 0
+
+        if self.has_linear_attn:
+            degree_zero_dim = fiber[0]
+            self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
+            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
 
         self.to_out = Linear(hidden_fiber, fiber)
 
@@ -549,12 +599,16 @@ class DotProductAttention(nn.Module):
 
             if exists(neighbor_mask):
                 left_pad_needed = int(self.attend_self)
-                mask = F.pad(neighbor_mask, (left_pad_needed, 0), value = True)
-                sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
+                padded_neighbor_mask = F.pad(neighbor_mask, (left_pad_needed, 0), value = True)
+                sim = sim.masked_fill(~padded_neighbor_mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
             out = einsum(f'b h i j, {kv_einsum_eq} -> b h i d m', attn, v)
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
+
+        if self.has_linear_attn:
+            lin_attn_out = self.linear_attn(features[0], mask = mask)
+            outputs[0] = torch.cat((outputs[0], lin_attn_out), dim = -2)
 
         return self.to_out(outputs)
 
@@ -572,6 +626,7 @@ class MLPAttention(nn.Module):
         attn_leakyrelu_slope = 0.1,
         attn_hidden_dim_mult = 4,
         radial_hidden_dim = 16,
+        num_linear_attn_heads = 0,
         **kwargs
     ):
         super().__init__()
@@ -628,9 +683,19 @@ class MLPAttention(nn.Module):
             Linear(value_hidden_fiber, value_hidden_fiber)
         )
 
+        # linear attention heads
+
+        self.has_linear_attn = num_linear_attn_heads > 0
+
+        if self.has_linear_attn:
+            degree_zero_dim = fiber[0]
+            self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
+            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
+
         # combining heads and projection out
 
         self.to_out = Linear(hidden_fiber, fiber)
+
 
     def forward(
         self,
@@ -684,6 +749,12 @@ class MLPAttention(nn.Module):
             out = rearrange(out, 'b i h d m -> b i (h d) m')
             outputs[degree] = out
 
+        # linear attention
+
+        if self.has_linear_attn:
+            lin_attn_out = self.linear_attn(features[0], mask = mask)
+            outputs[0] = torch.cat((outputs[0], lin_attn_out), dim = -2)
+
         # combine heads out
 
         return self.to_out(outputs)
@@ -717,7 +788,7 @@ class Equiformer(nn.Module):
         embedding_grad_frac = 0.5,
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
         ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
-        dot_product_attention = True,      # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
+        l2_dist_attention = True,          # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
         **kwargs
     ):
         super().__init__()
@@ -789,7 +860,7 @@ class Equiformer(nn.Module):
 
         self.layers = nn.ModuleList([])
 
-        attention_klass = DotProductAttention if dot_product_attention else MLPAttention
+        attention_klass = L2DistAttention if l2_dist_attention else MLPAttention
 
         for ind in range(depth):
             self.layers.append(nn.ModuleList([

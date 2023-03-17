@@ -37,6 +37,7 @@ model = Equiformer(
     dim = (4, 4, 2),               # dimensions per type, ascending, length must match number of degrees (num_degrees)
     dim_head = (4, 4, 4),          # dimension per attention head
     heads = (2, 2, 2),             # number of attention heads
+    num_linear_attn_heads = 0,     # number of global linear attention heads, can see all the neighbors
     num_degrees = 3,               # number of degrees
     depth = 4,                     # depth of equivariant transformer
     attend_self = True,            # attending to self or not
