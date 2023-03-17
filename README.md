@@ -42,7 +42,7 @@ model = Equiformer(
     depth = 4,                     # depth of equivariant transformer
     attend_self = True,            # attending to self or not
     reduce_dim_out = True,         # whether to reduce out to dimension of 1, say for predicting new coordinates for type 1 features
-    dot_product_attention = False  # set to False to try out MLP attention
+    l2_dist_attention = False      # set to False to try out MLP attention
 ).cuda()
 
 feats = torch.randint(0, 24, (1, 128)).cuda()
@@ -87,11 +87,11 @@ $ python denoise.py
 - [x] move self interacting key / value production into Conv, fix no pooling in conv with self interaction
 - [x] go with a naive way to split up contribution from input degrees for DTP
 - [x] for dot product attention in higher types, try euclidean distance
+- [x] consider a all-neighbors attention layer just for type0, using linear attention
 
 - [ ] start moving some spherical harmonic stuff to cpp or nim
 - [ ] add memory checkpointing for the entire DTP module
 - [ ] rotate in the relative distances into type0 dot product, as was done <a href="https://github.com/lucidrains/En-transformer">here</a>
-- [ ] consider a all-neighbors attention layer just for type0, but also incorporating in the norms of the higher types
 
 ## Citations
 
