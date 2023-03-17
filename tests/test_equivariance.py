@@ -19,15 +19,15 @@ def test_transformer():
     type0, _ = model(feats, coors, mask)
     assert type0.shape == (1, 32, DIM), 'output must be of the right shape'
 
-@pytest.mark.parametrize('dot_product_attention', [True, False])
+@pytest.mark.parametrize('l2_dist_attention', [True, False])
 def test_equivariance(
-    dot_product_attention
+    l2_dist_attention
 ):
 
     model = Equiformer(
         dim = DIM,
         depth = 1,
-        dot_product_attention = dot_product_attention,
+        l2_dist_attention = l2_dist_attention,
         reduce_dim_out = True
     )
 
