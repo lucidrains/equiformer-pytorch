@@ -131,8 +131,8 @@ class LayerNorm(nn.Module):
     def forward(self, x):
         return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
 
-@beartype
 class Linear(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber_in: Tuple[int, ...],
@@ -154,8 +154,8 @@ class Linear(nn.Module):
 
         return out
 
-@beartype
 class Norm(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -186,8 +186,8 @@ class Norm(nn.Module):
 
         return output
 
-@beartype
 class Gate(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber: Tuple[int, ...]
@@ -220,10 +220,10 @@ class Gate(nn.Module):
 
         return output
 
-@beartype
 class DTP(nn.Module):
     """ 'Tensor Product' - in the equivariant sense """
 
+    @beartype
     def __init__(
         self,
         fiber_in: Tuple[int, ...],
@@ -269,6 +269,7 @@ class DTP(nn.Module):
         if project_out:
             self.to_out = Linear(fiber_out, fiber_out)
 
+    @beartype
     def forward(
         self,
         inp,
@@ -407,8 +408,8 @@ class PairwiseTP(nn.Module):
 
 # feed forwards
 
-@beartype
 class FeedForward(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -491,8 +492,8 @@ class LinearAttention(nn.Module):
 
 # attention
 
-@beartype
 class L2DistAttention(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -541,6 +542,7 @@ class L2DistAttention(nn.Module):
 
         self.to_out = Linear(hidden_fiber, fiber)
 
+    @beartype
     def forward(
         self,
         features,
@@ -612,8 +614,8 @@ class L2DistAttention(nn.Module):
 
         return self.to_out(outputs)
 
-@beartype
 class MLPAttention(nn.Module):
+    @beartype
     def __init__(
         self,
         fiber: Tuple[int, ...],
@@ -696,7 +698,7 @@ class MLPAttention(nn.Module):
 
         self.to_out = Linear(hidden_fiber, fiber)
 
-
+    @beartype
     def forward(
         self,
         features,
@@ -761,8 +763,8 @@ class MLPAttention(nn.Module):
 
 # main class
 
-@beartype
 class Equiformer(nn.Module):
+    @beartype
     def __init__(
         self,
         *,
