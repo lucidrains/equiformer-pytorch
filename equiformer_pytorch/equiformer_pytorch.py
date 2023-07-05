@@ -389,22 +389,18 @@ class PairwiseTP(nn.Module):
 
     def forward(self, feat, basis):
         R = self.rp(feat)
-
         B = basis[f'{self.degree_in},{self.degree_out}']
-
-        out_shape = (*R.shape[:3], self.d_out * self.nc_out, -1)
 
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
 
         out = 0
+
         for i in range(R.shape[-1]):
             out += R[..., i] * B[..., i]
 
-        out = rearrange(out, 'b n h s ... -> (b n h s) ...')
-
-        # reshape and out
-        return out.view(*out_shape)
+        out = rearrange(out, 'b n h d_out nc_out ... -> b n h (d_out nc_out) (...)')
+        return out
 
 # feed forwards
 
@@ -784,7 +780,6 @@ class Equiformer(nn.Module):
         num_edge_tokens = None,
         edge_dim = None,
         attend_self = True,
-        differentiable_coors = False,
         splits = 4,
         linear_out = True,
         embedding_grad_frac = 0.5,
@@ -838,10 +833,6 @@ class Equiformer(nn.Module):
 
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
-
-        # whether to differentiate through basis, needed gradients for iterative refinement
-
-        self.differentiable_coors = differentiable_coors
 
         # neighbors hyperparameters
 
@@ -996,7 +987,7 @@ class Equiformer(nn.Module):
 
         # calculate basis
 
-        basis = get_basis(neighbor_rel_pos, num_degrees - 1, differentiable = self.differentiable_coors)
+        basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 
         # main logic
 
