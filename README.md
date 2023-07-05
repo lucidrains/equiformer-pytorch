@@ -148,3 +148,23 @@ $ python denoise.py
     year    = {2020}
 }
 ```
+
+```bibtex
+@article{Zitnick2022SphericalCF,
+    title   = {Spherical Channels for Modeling Atomic Interactions},
+    author  = {C. Lawrence Zitnick and Abhishek Das and Adeesh Kolluru and Janice Lan and Muhammed Shuaibi and Anuroop Sriram and Zachary W. Ulissi and Brandon C. Wood},
+    journal = {ArXiv},
+    year    = {2022},
+    volume  = {abs/2206.14331}
+}
+```
+
+```bibtex
+@article{Passaro2023ReducingSC,
+  title     = {Reducing SO(3) Convolutions to SO(2) for Efficient Equivariant GNNs},
+  author    = {Saro Passaro and C. Lawrence Zitnick},
+  journal   = {ArXiv},
+  year      = {2023},
+  volume    = {abs/2302.03655}
+}
+```

@@ -15,7 +15,7 @@ from equiformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cac
 CACHE_PATH = default(os.getenv('CACHE_PATH'), os.path.expanduser('~/.cache.equivariant_attention'))
 CACHE_PATH = CACHE_PATH if not exists(os.environ.get('CLEAR_CACHE')) else None
 
-# todo (figure ot why this was hard coded in official repo)
+# todo (figure out why this was hard coded in official repo)
 
 RANDOM_ANGLES = [ 
     [4.41301023, 5.56684102, 4.59384642],
