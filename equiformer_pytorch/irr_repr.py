@@ -92,6 +92,16 @@ def rot(alpha, beta, gamma):
     '''
     return rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
 
+def rot_to_euler_angles(R):
+    '''
+    Rotation matrix to ZYZ Euler angles
+    '''
+    alpha = atan2(R[..., 1, 2], R[..., 0, 2])
+    sp, cp = sin(alpha), cos(alpha)
+    beta = atan2(cp * R[..., 0, 2] + sp * R[..., 1, 2], R[..., 2, 2])
+    gamma = atan2(-sp * R[..., 0, 0] + cp * R[..., 1, 0], -sp * R[..., 0, 1] * cp * R[..., 1, 1])
+    return torch.stack((alpha, beta, gamma), dim = -1)
+
 def compose(a1, b1, c1, a2, b2, c2):
     """
     (a, b, c) = (a1, b1, c1) composed with (a2, b2, c2)
