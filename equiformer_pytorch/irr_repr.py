@@ -58,10 +58,12 @@ def irr_repr(order, alpha, beta = None, gamma = None, dtype = None):
     - compatible with compose and spherical_harmonics
     """
     if not (exists(beta) and exists(gamma)):
+        assert isinstance(alpha, torch.Tensor)
+        dtype = alpha.dtype
         alpha, beta, gamma = alpha.unbind(dim = -1)
 
     cast_ = cast_torch_tensor(identity)
-    dtype = default(dtype, alpha.dtype)
+    dtype = default(dtype, torch.get_default_dtype())
     alpha, beta, gamma = map(cast_, (alpha, beta, gamma))
     return wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
 
