@@ -233,8 +233,7 @@ class DTP(nn.Module):
         project_out = True,     # whether to do a project out after the "tensor product"
         pool = True,
         edge_dim = 0,
-        radial_hidden_dim = 16,
-        splits = 4
+        radial_hidden_dim = 16
     ):
         super().__init__()
         self.fiber_in = fiber_in
@@ -242,7 +241,6 @@ class DTP(nn.Module):
         self.edge_dim = edge_dim
         self.self_interaction = self_interaction
         self.pool = pool
-        self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
 
         self.project_xi_xj = project_xi_xj
         if project_xi_xj:
@@ -277,17 +275,10 @@ class DTP(nn.Module):
         rel_dist = None,
         basis = None
     ):
-        splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
 
         kernels = {}
         outputs = {}
-
-        # split basis
-
-        basis_keys = basis.keys()
-        split_basis_values = list(zip(*list(map(lambda t: fast_split(t, splits, dim = 1), basis.values()))))
-        split_basis = list(map(lambda v: dict(zip(basis_keys, v)), split_basis_values))
 
         # neighbors
 
@@ -312,28 +303,22 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
-                x = rearrange(x, 'b i j d m -> b i j (d m) 1')
+                x = rearrange(x, 'b i j d m -> b i j (d m)')
 
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
 
-                output_chunk = None
-                split_x = fast_split(x, splits, dim = 1)
-                split_edge_features = fast_split(edge_features, splits, dim = 1)
-
                 # process input, edges, and basis in chunks along the sequence dimension
 
-                for x_chunk, edge_features, basis in zip(split_x, split_edge_features, split_basis):
-                    kernel = kernel_fn(edge_features, basis = basis)
-                    chunk = einsum('... o i, ... i c -> ... o c', kernel, x_chunk)
-                    output_chunk = safe_cat(output_chunk, chunk, dim = 1)
+                kernel = kernel_fn(edge_features, basis = basis)
+                output_chunk = einsum('... o i, ... i -> ... o', kernel, x)
 
-                output = safe_cat(output, output_chunk, dim = -2)
+                output = safe_cat(output, output_chunk, dim = -1)
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
-            output = rearrange(output, '... (d m) 1 -> ... d m', m = to_order(degree_out))            
+            output = rearrange(output, '... (d m) -> ... d m', m = to_order(degree_out))
             outputs[degree_out] = output
 
         if not self.self_interaction and not self.project_out:
@@ -387,7 +372,9 @@ class PairwiseTP(nn.Module):
 
     def forward(self, feat, basis):
         R = self.rp(feat)
+
         B = basis[f'{self.degree_in},{self.degree_out}']
+        B = rearrange(B, 'o i m -> o 1 i m')
 
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
@@ -497,7 +484,6 @@ class L2DistAttention(nn.Module):
         edge_dim = None,
         single_headed_kv = False,
         radial_hidden_dim = 64,
-        splits = 4,
         num_linear_attn_heads = 0
     ):
         super().__init__()
@@ -523,7 +509,7 @@ class L2DistAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self)
 
         # linear attention heads
 
@@ -617,7 +603,6 @@ class MLPAttention(nn.Module):
         heads: Union[int, Tuple[int, ...]] = 8,
         attend_self = False,
         edge_dim = None,
-        splits = 4,
         single_headed_kv = False,
         attn_leakyrelu_slope = 0.1,
         attn_hidden_dim_mult = 4,
@@ -660,7 +645,7 @@ class MLPAttention(nn.Module):
 
         # main branch tensor product
 
-        self.to_attn_and_v = DTP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_attn_and_v = DTP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self)
 
         # non-linear projection of attention branch into the attention logits
 
@@ -778,7 +763,6 @@ class Equiformer(nn.Module):
         num_edge_tokens = None,
         edge_dim = None,
         attend_self = True,
-        splits = 4,
         linear_out = True,
         embedding_grad_frac = 0.5,
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
@@ -843,8 +827,7 @@ class Equiformer(nn.Module):
             self.dim_in,
             self.dim,
             edge_dim = edge_dim,
-            radial_hidden_dim = radial_hidden_dim,
-            splits = splits
+            radial_hidden_dim = radial_hidden_dim
         )
 
         # trunk
@@ -861,7 +844,6 @@ class Equiformer(nn.Module):
                     dim_head = dim_head,
                     attend_self = attend_self,
                     edge_dim = edge_dim,
-                    splits = splits,
                     single_headed_kv = single_headed_kv,
                     radial_hidden_dim = radial_hidden_dim,
                     **kwargs
