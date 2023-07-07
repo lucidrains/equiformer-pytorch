@@ -27,6 +27,9 @@ except:
 def exists(val):
     return val is not None
 
+def identity(t):
+    return t
+
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
     """Create wigner D matrices for batch of ZYZ Euler angles for degree l."""
     J = Jd[degree].type(dtype).to(device)
@@ -49,13 +52,16 @@ def z_rot_mat(angle, l):
     m[inds, inds] = cos(frequencies * angle[None])
     return m
 
-def irr_repr(order, alpha, beta, gamma, dtype = None):
+def irr_repr(order, alpha, beta = None, gamma = None, dtype = None):
     """
     irreducible representation of SO3
     - compatible with compose and spherical_harmonics
     """
-    cast_ = cast_torch_tensor(lambda t: t)
-    dtype = default(dtype, torch.get_default_dtype())
+    if not (exists(beta) and exists(gamma)):
+        alpha, beta, gamma = alpha.unbind(dim = -1)
+
+    cast_ = cast_torch_tensor(identity)
+    dtype = default(dtype, alpha.dtype)
     alpha, beta, gamma = map(cast_, (alpha, beta, gamma))
     return wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
 
@@ -118,10 +124,10 @@ def rot_x_to_y_direction(x, y):
     '''
     n, dtype, device = x.shape[-1], x.dtype, x.device
 
-    identity = torch.eye(n, device = device, dtype = dtype)
+    I = torch.eye(n, device = device, dtype = dtype)
 
     if torch.allclose(x, y, atol = 1e-6):
-        return identity
+        return I
 
     x, y = x.double(), y.double()
 
@@ -131,7 +137,7 @@ def rot_x_to_y_direction(x, y):
     xy = rearrange(x + y, '... n -> ... n 1')
     xy_t = rearrange(xy, '... n 1 -> ... 1 n')
 
-    R = 2 * (xy @ xy_t) / (xy_t @ xy) - identity
+    R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
     return R.type(dtype)
 
 def compose(a1, b1, c1, a2, b2, c2):
