@@ -306,7 +306,7 @@ class DTP(nn.Module):
 
                 # rotate input to align with z axis
 
-                if exists(D_to_align_z_axis):
+                if exists(D_to_align_z_axis) and degree_in > 1:
                     D = D_to_align_z_axis[degree_in]
                     x = einsum('b i j d m, b i j n m -> b i j d n', x, D)
 
@@ -324,7 +324,7 @@ class DTP(nn.Module):
 
                 output_chunk = rearrange(output_chunk, '... (d m) -> ... d m', m = to_order(degree_out))
 
-                if exists(D_to_align_z_axis):
+                if exists(D_to_align_z_axis) and degree_out > 1:
                     D_inv = D_to_align_z_axis[degree_out]
                     output_chunk = einsum('b i j d m, b i j n m -> b i j d n', output_chunk, D_inv)
 
@@ -389,9 +389,6 @@ class PairwiseTP(nn.Module):
 
         B = basis[f'{self.degree_in},{self.degree_out}']
         B = rearrange(B, 'o i m -> o 1 i m')
-
-        # torch.sum(R * B, dim = -1) is too memory intensive
-        # needs to be chunked to reduce peak memory usage
 
         out = torch.sum(R * B, dim = -1)
         out = rearrange(out, 'b n h d_out nc_out ... -> b n h (d_out nc_out) (...)')

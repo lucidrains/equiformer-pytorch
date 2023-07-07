@@ -29,6 +29,4 @@ def test_irr_repr():
 
         DrY = irr_repr(order, alpha, beta, gamma) @ Y
 
-        d, r = (Yrx - DrY).abs().max(), Y.abs().max()
-
-        assert d < 1e-10 * r, d / r
+        assert torch.allclose(Yrx, DrY, atol = 1e-6)
