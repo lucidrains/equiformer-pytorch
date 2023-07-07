@@ -306,7 +306,7 @@ class DTP(nn.Module):
 
                 # rotate input to align with z axis
 
-                if exists(D_to_align_z_axis) and degree_in > 1:
+                if exists(D_to_align_z_axis) and degree_in > 0:
                     D = D_to_align_z_axis[degree_in]
                     x = einsum('b i j d m, b i j n m -> b i j d n', x, D)
 
@@ -324,7 +324,7 @@ class DTP(nn.Module):
 
                 output_chunk = rearrange(output_chunk, '... (d m) -> ... d m', m = to_order(degree_out))
 
-                if exists(D_to_align_z_axis) and degree_out > 1:
+                if exists(D_to_align_z_axis) and degree_out > 0:
                     D_inv = D_to_align_z_axis[degree_out]
                     output_chunk = einsum('b i j d m, b i j n m -> b i j d n', output_chunk, D_inv)
 
