@@ -24,6 +24,9 @@ except:
     Jd_np = np.load(str(path), allow_pickle = True)
     Jd = list(map(torch.from_numpy, Jd_np))
 
+def exists(val):
+    return val is not None
+
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
     """Create wigner D matrices for batch of ZYZ Euler angles for degree l."""
     J = Jd[degree].type(dtype).to(device)
@@ -89,10 +92,13 @@ def x_to_alpha_beta(x):
     alpha = atan2(a1, a0)
     return (alpha, beta)
 
-def rot(alpha, beta, gamma):
+def rot(alpha, beta = None, gamma = None):
     '''
     ZYZ Euler angles rotation
     '''
+    if not (exists(beta) or exists(gamma)):
+        alpha, beta, gamma = alpha.unbind(dim = -1)
+
     return rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
 
 def rot_to_euler_angles(R):
@@ -102,7 +108,7 @@ def rot_to_euler_angles(R):
     alpha = atan2(R[..., 1, 2], R[..., 0, 2])
     sp, cp = sin(alpha), cos(alpha)
     beta = atan2(cp * R[..., 0, 2] + sp * R[..., 1, 2], R[..., 2, 2])
-    gamma = atan2(-sp * R[..., 0, 0] + cp * R[..., 1, 0], -sp * R[..., 0, 1] * cp * R[..., 1, 1])
+    gamma = atan2(R[..., 1, 2], -R[..., 0, 2])
     return torch.stack((alpha, beta, gamma), dim = -1)
 
 def rot_x_to_y_direction(x, y):
@@ -125,7 +131,7 @@ def rot_x_to_y_direction(x, y):
     xy = rearrange(x + y, '... n -> ... n 1')
     xy_t = rearrange(xy, '... n 1 -> ... 1 n')
 
-    R =  2 * (xy @ xy_t) / (xy_t @ xy) - identity
+    R = 2 * (xy @ xy_t) / (xy_t @ xy) - identity
     return R.type(dtype)
 
 def compose(a1, b1, c1, a2, b2, c2):
