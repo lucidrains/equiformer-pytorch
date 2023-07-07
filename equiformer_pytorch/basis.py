@@ -186,13 +186,15 @@ def get_basis_pkg(r_ij, max_degree):
     )
 
     # precompute D
-    # 1. compute rotation to [0., 1., 0.]
+    # 1. compute rotation to [0, 1, 0]
     # 2. calculate the ZYZ euler angles from that rotation
     # 3. calculate the D irreducible representation from 0 ... max_degree (technically 0 not needed)
 
+    z_axis = torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+
     R = rot_x_to_y_direction(
         r_ij,
-        torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+        z_axis
     )
 
     angles = rot_to_euler_angles(R)
@@ -200,30 +202,33 @@ def get_basis_pkg(r_ij, max_degree):
     for d in range(max_degree + 1):
         pkg['D'][d] = irr_repr_tensor(d, angles)
 
-    # Spherical harmonic basis
+    # calculate spherical harmonics for [0, 1, 0] only
 
-    r_ij_spherical = get_spherical_from_cartesian(r_ij)
+    z_axis_spherical = torch.tensor([1., 0., 0.], device = device, dtype = dtype)
+    Y = precompute_sh(z_axis_spherical, 2 * max_degree)
 
-    Y = precompute_sh(r_ij_spherical, 2 * max_degree)
-
-    # Equivariant basis (dict['<d_in><d_out>'])
+    # Equivariant basis (dict['<d_in><d_out>']) for [0, 1, 0] only
 
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
 
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
-            # Get spherical harmonic projection matrices
+            # spherical harmonic projection matrices
+
             Q_J = basis_transformation_Q_J(J, d_in, d_out)
-            Q_J = Q_J.type(dtype).to(device)
+            Q_J = Q_J.to(r_ij)
 
-            # Create kernel from spherical harmonics
-            K_J = torch.matmul(Y[J], Q_J.T)
+            # given Y is now sparse (with r_ij rotated to [0, 1, 0]), simply select out the value at m0
 
+            Y_J = Y[J]
+            m0_index = Y_J.shape[-1] // 2
+
+            K_J = Y_J[m0_index] * Q_J.T[m0_index]
             K_Js.append(K_J)
 
         K_Js = rearrange(
             K_Js,
-            'm ... (o i) -> ... 1 o 1 i m',
+            'm (o i) -> o i m',
             o = to_order(d_out),
             i = to_order(d_in),
             m = to_order(min(d_in, d_out))
