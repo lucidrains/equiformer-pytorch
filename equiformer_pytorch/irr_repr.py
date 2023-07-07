@@ -6,7 +6,10 @@ from functools import wraps
 import numpy as np
 
 import torch
+import torch.nn.functional as F
 from torch import sin, cos, atan2, acos
+
+from einops import rearrange
 
 from equiformer_pytorch.utils import exists, default, cast_torch_tensor, to_order
 from equiformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
@@ -101,6 +104,29 @@ def rot_to_euler_angles(R):
     beta = atan2(cp * R[..., 0, 2] + sp * R[..., 1, 2], R[..., 2, 2])
     gamma = atan2(-sp * R[..., 0, 0] + cp * R[..., 1, 0], -sp * R[..., 0, 1] * cp * R[..., 1, 1])
     return torch.stack((alpha, beta, gamma), dim = -1)
+
+def rot_x_to_y_direction(x, y):
+    '''
+    Rotates a vector x to the same direction as vector y
+    Taken from https://math.stackexchange.com/a/2672702
+    '''
+    n, dtype, device = x.shape[-1], x.dtype, x.device
+
+    identity = torch.eye(n, device = device, dtype = dtype)
+
+    if torch.allclose(x, y, atol = 1e-6):
+        return identity
+
+    x, y = x.double(), y.double()
+
+    x = F.normalize(x, dim = -1)
+    y = F.normalize(y, dim = -1)
+
+    xy = rearrange(x + y, '... n -> ... n 1')
+    xy_t = rearrange(xy, '... n 1 -> ... 1 n')
+
+    R =  2 * (xy @ xy_t) / (xy_t @ xy) - identity
+    return R.type(dtype)
 
 def compose(a1, b1, c1, a2, b2, c2):
     """
