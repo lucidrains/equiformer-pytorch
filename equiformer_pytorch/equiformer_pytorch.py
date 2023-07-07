@@ -298,7 +298,7 @@ class DTP(nn.Module):
 
         # go through every permutation of input degree type to output degree type
 
-        for degree_out, _ in enumerate(self.fiber_out):
+        for degree_out, m_out in enumerate(self.fiber_out):
             output = None
 
             for degree_in, m_in in enumerate(self.fiber_in):
@@ -312,7 +312,7 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
-                x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
+                x = rearrange(x, 'b i j d m -> b i j (d m) 1')
 
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
@@ -333,9 +333,7 @@ class DTP(nn.Module):
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
-            leading_shape = x.shape[:2] if self.pool else x.shape[:3]
-            output = output.view(*leading_shape, -1, to_order(degree_out))
-
+            output = rearrange(output, '... (d m) 1 -> ... d m', m = to_order(degree_out))            
             outputs[degree_out] = output
 
         if not self.self_interaction and not self.project_out:

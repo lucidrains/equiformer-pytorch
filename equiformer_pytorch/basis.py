@@ -129,7 +129,13 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     null_space = get_matrices_kernel(sylvester_submatrices)
     assert null_space.size(0) == 1, null_space.size()  # unique subspace solution
     Q_J = null_space[0]  # [(m_out * m_in) * m]
-    Q_J = Q_J.view(to_order(order_out) * to_order(order_in), to_order(J))  # [m_out * m_in, m]
+
+    Q_J = rearrange(
+        Q_J,
+        '(oi m) -> oi m',
+        m = to_order(J)
+    )
+
     return Q_J.float()  # [m_out * m_in, m]
 
 def precompute_sh(r_ij, max_J):
@@ -140,8 +146,8 @@ def precompute_sh(r_ij, max_J):
     :param max_J: maximum order used in entire network
     :return: dict where each entry has shape [B,N,K,2J+1]
     """
-    i_alpha, i_beta = 1, 2
-    Y_Js = {J: spherical_harmonics(J, r_ij[...,i_alpha], r_ij[...,i_beta]) for J in range(max_J + 1)}
+    _, alpha, beta = r_ij.unbind(dim = -1)
+    Y_Js = {J: spherical_harmonics(J, alpha, beta) for J in range(max_J + 1)}
     clear_spherical_harmonics_cache()
     return Y_Js
 
