@@ -180,10 +180,9 @@ def get_basis_pkg(r_ij, max_degree):
     # 1. basis
     # 2. irreducible representation D to rotate all r_ij to [0., 1., 0.]
 
-    pkg = dict(
-        basis = dict(),
-        D = dict()
-    )
+    pkg = dict()
+    basis = dict()
+    D = dict()
 
     # precompute D
     # 1. compute rotation to [0, 1, 0]
@@ -200,7 +199,7 @@ def get_basis_pkg(r_ij, max_degree):
     angles = rot_to_euler_angles(R)
 
     for d in range(max_degree + 1):
-        pkg['D'][d] = irr_repr_tensor(d, angles)
+        D[d] = irr_repr_tensor(d, angles)
 
     # calculate spherical harmonics for [0, 1, 0] only
 
@@ -234,6 +233,6 @@ def get_basis_pkg(r_ij, max_degree):
             m = to_order(min(d_in, d_out))
         )
 
-        pkg['basis'][f'{d_in},{d_out}'] = K_Js
+        basis[f'{d_in},{d_out}'] = K_Js
 
-    return pkg
+    return dict(basis = basis, D = D)

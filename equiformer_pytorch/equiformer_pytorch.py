@@ -273,7 +273,8 @@ class DTP(nn.Module):
         inp,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None
+        basis = None,
+        D_to_align_z_axis = None,
     ):
         neighbor_indices, neighbor_masks, edges = edge_info
 
@@ -303,6 +304,12 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
+                # rotate input to align with z axis
+
+                if exists(D_to_align_z_axis):
+                    D = D_to_align_z_axis[degree_in]
+                    x = einsum('b i j d m, b i j n m -> b i j d n', x, D)
+
                 x = rearrange(x, 'b i j d m -> b i j (d m)')
 
                 kernel_fn = self.kernel_unary[etype]
@@ -313,12 +320,19 @@ class DTP(nn.Module):
                 kernel = kernel_fn(edge_features, basis = basis)
                 output_chunk = einsum('... o i, ... i -> ... o', kernel, x)
 
-                output = safe_cat(output, output_chunk, dim = -1)
+                # rotate output back with D^-1, which is the same as D?
+
+                output_chunk = rearrange(output_chunk, '... (d m) -> ... d m', m = to_order(degree_out))
+
+                if exists(D_to_align_z_axis):
+                    D_inv = D_to_align_z_axis[degree_out]
+                    output_chunk = einsum('b i j d m, b i j n m -> b i j d n', output_chunk, D_inv)
+
+                output = safe_cat(output, output_chunk, dim = -2)
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
-            output = rearrange(output, '... (d m) -> ... d m', m = to_order(degree_out))
             outputs[degree_out] = output
 
         if not self.self_interaction and not self.project_out:
@@ -379,11 +393,7 @@ class PairwiseTP(nn.Module):
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
 
-        out = 0
-
-        for i in range(R.shape[-1]):
-            out += R[..., i] * B[..., i]
-
+        out = torch.sum(R * B, dim = -1)
         out = rearrange(out, 'b n h d_out nc_out ... -> b n h (d_out nc_out) (...)')
         return out
 
@@ -529,6 +539,7 @@ class L2DistAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D_to_align_z_axis,
         mask = None
     ):
         one_head_kv = self.single_headed_kv
@@ -547,7 +558,8 @@ class L2DistAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D_to_align_z_axis = D_to_align_z_axis
         )
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
@@ -684,6 +696,7 @@ class MLPAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D_to_align_z_axis,
         mask = None
     ):
         one_headed_kv = self.single_headed_kv
@@ -694,7 +707,8 @@ class MLPAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D_to_align_z_axis = D_to_align_z_axis
         )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
@@ -977,7 +991,13 @@ class Equiformer(nn.Module):
 
         # project in
 
-        x = self.tp_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis_pkg['basis'])
+        x = self.tp_in(
+            x,
+            edge_info,
+            rel_dist = neighbor_rel_dist,
+            basis = basis_pkg['basis'],
+            D_to_align_z_axis = basis_pkg['D']
+        )
 
         # transformer layers
 
@@ -985,6 +1005,7 @@ class Equiformer(nn.Module):
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
             basis = basis_pkg['basis'],
+            D_to_align_z_axis = basis_pkg['D'],
             mask = _mask
         )
 
