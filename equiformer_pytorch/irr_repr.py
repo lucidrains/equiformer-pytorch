@@ -66,7 +66,7 @@ def z_rot_mat(angle, l):
     m[batch_range, inds, inds] = cos(frequencies * angle[..., None])
     return m
 
-def irr_repr(order, alpha, beta, gamma, dtype = None):
+def irr_repr(order, alpha, beta, gamma, dtype = None, device = None):
     """
     irreducible representation of SO3
     - compatible with compose and spherical_harmonics
@@ -75,18 +75,19 @@ def irr_repr(order, alpha, beta, gamma, dtype = None):
     dtype = default(dtype, torch.get_default_dtype())
     alpha, beta, gamma = map(cast_, (alpha, beta, gamma))
     alpha, beta, gamma = map(lambda t: t[None], (alpha, beta, gamma))
-    rep = wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
+
+    rep = wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype, device = device)
     return rearrange(rep, '1 ... -> ...')
 
 def irr_repr_tensor(order, angles):
     """
     irreducible representation of SO3 - accepts multiple angles in tensor
     """
-    dtype = angles.dtype
+    dtype, device = angles.dtype, angles.device
     angles, ps = pack_one(angles, '* c')
 
     alpha, beta, gamma = angles.unbind(dim = -1)
-    rep = wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
+    rep = wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype, device = device)
 
     return unpack_one(rep, ps, '* o1 o2')
 

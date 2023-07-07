@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from equiformer_pytorch.basis import get_basis
+from equiformer_pytorch.basis import get_basis_pkg
 from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
 from einops import rearrange, repeat, pack, unpack
@@ -985,7 +985,7 @@ class Equiformer(nn.Module):
 
         # calculate basis
 
-        basis = get_basis(neighbor_rel_pos, num_degrees - 1)
+        basis_pkg = get_basis_pkg(neighbor_rel_pos, num_degrees - 1)
 
         # main logic
 
@@ -995,14 +995,14 @@ class Equiformer(nn.Module):
 
         # project in
 
-        x = self.tp_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        x = self.tp_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis_pkg['basis'])
 
         # transformer layers
 
         attn_kwargs = dict(
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
-            basis = basis,
+            basis = basis_pkg['basis'],
             mask = _mask
         )
 

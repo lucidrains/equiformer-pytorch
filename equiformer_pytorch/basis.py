@@ -2,11 +2,18 @@ import os
 from math import pi
 import torch
 from torch import einsum
-from einops import rearrange
+from einops import rearrange, repeat
 from itertools import product
 from contextlib import contextmanager, nullcontext
 
-from equiformer_pytorch.irr_repr import irr_repr, spherical_harmonics
+from equiformer_pytorch.irr_repr import (
+    irr_repr,
+    spherical_harmonics,
+    rot_x_to_y_direction,
+    rot_to_euler_angles,
+    irr_repr_tensor
+)
+
 from equiformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
 from equiformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
@@ -152,7 +159,7 @@ def precompute_sh(r_ij, max_J):
     return Y_Js
 
 @torch.no_grad()
-def get_basis(r_ij, max_degree):
+def get_basis_pkg(r_ij, max_degree):
     """Return equivariant weight basis (basis)
 
     Call this function *once* at the start of each forward pass of the model.
@@ -167,19 +174,40 @@ def get_basis(r_ij, max_degree):
     Returns:
         dict of equivariant bases, keys are in form '<d_in><d_out>'
     """
-
-    # Relative positional encodings (vector)
-
     device, dtype = r_ij.device, r_ij.dtype
 
-    r_ij = get_spherical_from_cartesian(r_ij)
+    # Package will include
+    # 1. basis
+    # 2. irreducible representation D to rotate all r_ij to [0., 1., 0.]
+
+    pkg = dict(
+        basis = dict(),
+        D = dict()
+    )
+
+    # precompute D
+    # 1. compute rotation to [0., 1., 0.]
+    # 2. calculate the ZYZ euler angles from that rotation
+    # 3. calculate the D irreducible representation from 0 ... max_degree (technically 0 not needed)
+
+    R = rot_x_to_y_direction(
+        r_ij,
+        torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+    )
+
+    angles = rot_to_euler_angles(R)
+
+    for d in range(max_degree + 1):
+        pkg['D'][d] = irr_repr_tensor(d, angles)
 
     # Spherical harmonic basis
-    Y = precompute_sh(r_ij, 2 * max_degree)
+
+    r_ij_spherical = get_spherical_from_cartesian(r_ij)
+
+    Y = precompute_sh(r_ij_spherical, 2 * max_degree)
 
     # Equivariant basis (dict['<d_in><d_out>'])
 
-    basis = {}
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
 
@@ -201,6 +229,6 @@ def get_basis(r_ij, max_degree):
             m = to_order(min(d_in, d_out))
         )
 
-        basis[f'{d_in},{d_out}'] = K_Js
+        pkg['basis'][f'{d_in},{d_out}'] = K_Js
 
-    return basis
+    return pkg

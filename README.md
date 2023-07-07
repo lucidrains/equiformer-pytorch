@@ -89,9 +89,14 @@ $ python denoise.py
 - [x] for dot product attention in higher types, try euclidean distance
 - [x] consider a all-neighbors attention layer just for type0, using linear attention
 
-- [ ] start moving some spherical harmonic stuff to cpp or nim
-- [ ] add memory checkpointing for the entire DTP module
-- [ ] rotate in the relative distances into type0 dot product, as was done <a href="https://github.com/lucidrains/En-transformer">here</a>
+- [ ] integrate the new finding from spherical channels paper, followed up by so(3) -> so(2) paper, which reduces the computation from O(L^6) -> O(L^3)!
+    - [x] add rotation matrix -> ZYZ euler angles
+    - [x] function for deriving rotation matrix for r_ij -> (0, 1, 0)
+    - [x] prepare get_basis to return D for rotating representations to (0, 1, 0) to greatly simplify spherical harmonics
+    - [ ] add tests for batch rotating vectors to align with another - handle edge cases (0, 0, 0)?
+    - [ ] redo get_basis to only calculate spherical harmonics Y for (0, 1, 0) and cache
+    - [ ] validate order of magnitude speed up and reach for higher degrees
+    - [ ] add equiformer v2, and start looking into equivariant protein backbone diffusion again
 
 ## Citations
 
