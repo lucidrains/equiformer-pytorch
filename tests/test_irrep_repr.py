@@ -1,7 +1,8 @@
 import torch
+from torch import einsum
 
 from equiformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
-from equiformer_pytorch.irr_repr import spherical_harmonics, irr_repr, compose
+from equiformer_pytorch.irr_repr import spherical_harmonics, irr_repr, irr_repr_tensor, compose
 from equiformer_pytorch.utils import torch_default_dtype
 
 @torch_default_dtype(torch.float64)
@@ -29,6 +30,27 @@ def test_irr_repr():
 
         DrY = irr_repr(order, alpha, beta, gamma) @ Y
 
-        d, r = (Yrx - DrY).abs().max(), Y.abs().max()
+        assert torch.allclose(Yrx, DrY, atol = 1e-5)
 
-        assert d < 1e-10 * r, d / r
+@torch_default_dtype(torch.float64)
+def test_irr_repr_with_leading():
+    """
+    same as above, but with leading dimensions
+    needed to make sure one can compose batches of angles, spherical harmonics, irreps
+    """
+    for order in range(1, 7):
+        a, b = torch.rand(16, 2).unbind(dim = -1)
+        rotations = torch.rand(16, 3)
+        alpha, beta, gamma = rotations.unbind(dim = -1)
+
+        ra, rb, _ = compose(alpha, beta, gamma, a, b, 0)
+        Yrx = spherical_harmonics(order, ra, rb)
+        clear_spherical_harmonics_cache()
+
+        Y = spherical_harmonics(order, a, b)
+        clear_spherical_harmonics_cache()
+
+        rotated_irrep = irr_repr_tensor(order, rotations)
+        DrY = einsum('b m n, b n -> b m', rotated_irrep, Y)
+
+        assert torch.allclose(Yrx, DrY, atol = 1e-5)

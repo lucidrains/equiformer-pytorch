@@ -96,42 +96,59 @@ def rot_z(gamma):
     '''
     Rotation around Z axis
     '''
-    return torch.tensor([
-        [cos(gamma), -sin(gamma), 0],
-        [sin(gamma), cos(gamma), 0],
-        [0, 0, 1]
-    ], dtype=gamma.dtype, device=gamma.device)
+    c = cos(gamma)
+    s = sin(gamma)
+    z = torch.zeros_like(gamma)
+    o = torch.ones_like(gamma)
+
+    out = torch.stack((
+        c, -s, z,
+        s, c, z,
+        z, z, o
+    ), dim = -1)
+
+    return rearrange(out, '... (r1 r2) -> ... r1 r2', r1 = 3)
 
 @cast_torch_tensor
 def rot_y(beta):
     '''
     Rotation around Y axis
     '''
-    return torch.tensor([
-        [cos(beta), 0, sin(beta)],
-        [0, 1, 0],
-        [-sin(beta), 0, cos(beta)]
-    ], dtype=beta.dtype, device=beta.device)
+    c = cos(beta)
+    s = sin(beta)
+    z = torch.zeros_like(beta)
+    o = torch.ones_like(beta)
+
+    out = torch.stack((
+        c, z, s,
+        z, o, z,
+        -s, z, c
+    ), dim = -1)
+
+    return rearrange(out, '... (r1 r2) -> ... r1 r2', r1 = 3)
 
 @cast_torch_tensor
 def x_to_alpha_beta(x):
     '''
     Convert point (x, y, z) on the sphere into (alpha, beta)
     '''
-    x = x / torch.norm(x)
-    a0, a1, b1 = x.unbind(dim=0)
+    x = F.normalize(x, dim = -1)
+    a0, a1, b1 = x.unbind(dim = -1)
     beta = acos(b1)
     alpha = atan2(a1, a0)
     return (alpha, beta)
 
-def rot(alpha, beta = None, gamma = None):
+def rot(alpha, beta, gamma):
     '''
     ZYZ Euler angles rotation
     '''
-    if not (exists(beta) or exists(gamma)):
-        alpha, beta, gamma = alpha.unbind(dim = -1)
-
     return rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
+
+def rot_tensor(angles):
+    angles, ps = pack_one(angles, '* a')
+    alpha, beta, gamma = angles.unbind(dim = -1)
+    rotations = rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
+    return unpack_one(rotations, ps, '* r1 r2')
 
 def rot_to_euler_angles(R):
     '''
