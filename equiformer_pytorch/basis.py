@@ -9,6 +9,7 @@ from contextlib import contextmanager, nullcontext
 from equiformer_pytorch.irr_repr import (
     irr_repr,
     spherical_harmonics,
+    rot_tensor,
     rot_x_to_y_direction,
     rot_to_euler_angles,
     irr_repr_tensor
@@ -183,6 +184,7 @@ def get_basis_pkg(r_ij, max_degree):
     pkg = dict()
     basis = dict()
     D = dict()
+    D_inv = dict()
 
     # precompute D
     # 1. compute rotation to [0, 1, 0]
@@ -196,10 +198,18 @@ def get_basis_pkg(r_ij, max_degree):
         z_axis
     )
 
+    assert torch.allclose(R, R.transpose(-1, -2))
+
     angles = rot_to_euler_angles(R)
+    inv_angles = -torch.flip(angles, dims = (-1,))
+
+    R_inv = rot_tensor(inv_angles)
 
     for d in range(max_degree + 1):
         D[d] = irr_repr_tensor(d, angles)
+        D_inv[d] = irr_repr_tensor(d, inv_angles)
+
+        assert torch.allclose(D[d] @ D_inv[d], torch.eye(d * 2 + 1), atol = 1e-4)
 
     # calculate spherical harmonics for [0, 1, 0] only
 
@@ -222,7 +232,7 @@ def get_basis_pkg(r_ij, max_degree):
             Y_J = Y[J]
             m0_index = Y_J.shape[-1] // 2
 
-            K_J = Y_J[m0_index] * Q_J.T[m0_index]
+            K_J = Y_J @ Q_J.T
             K_Js.append(K_J)
 
         K_Js = rearrange(
@@ -235,4 +245,4 @@ def get_basis_pkg(r_ij, max_degree):
 
         basis[f'{d_in},{d_out}'] = K_Js
 
-    return dict(basis = basis, D = D)
+    return dict(basis = basis, D = D, D_inv = D_inv)

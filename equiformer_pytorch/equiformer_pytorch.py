@@ -274,7 +274,8 @@ class DTP(nn.Module):
         edge_info: EdgeInfo,
         rel_dist = None,
         basis = None,
-        D_to_align_z_axis = None,
+        D = None,
+        D_inv = None
     ):
         neighbor_indices, neighbor_masks, edges = edge_info
 
@@ -306,9 +307,8 @@ class DTP(nn.Module):
 
                 # rotate input to align with z axis
 
-                if exists(D_to_align_z_axis) and degree_in > 0:
-                    D = D_to_align_z_axis[degree_in]
-                    x = einsum('b i j d m, b i j n m -> b i j d n', x, D)
+                if degree_in > 0:
+                    x = einsum('b i j n m, b i j d m -> b i j d n', D[degree_in], x)
 
                 x = rearrange(x, 'b i j d m -> b i j (d m)')
 
@@ -324,9 +324,8 @@ class DTP(nn.Module):
 
                 output_chunk = rearrange(output_chunk, '... (d m) -> ... d m', m = to_order(degree_out))
 
-                if exists(D_to_align_z_axis) and degree_out > 0:
-                    D_inv = D_to_align_z_axis[degree_out]
-                    output_chunk = einsum('b i j d m, b i j n m -> b i j d n', output_chunk, D_inv)
+                if degree_out > 0:
+                    output_chunk = einsum('b i j n m, b i j d m -> b i j d n', D_inv[degree_out], output_chunk)
 
                 output = safe_cat(output, output_chunk, dim = -2)
 
@@ -334,6 +333,8 @@ class DTP(nn.Module):
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
             outputs[degree_out] = output
+
+        return outputs
 
         if not self.self_interaction and not self.project_out:
             return outputs
@@ -536,7 +537,8 @@ class L2DistAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
-        D_to_align_z_axis,
+        D,
+        D_inv,
         mask = None
     ):
         one_head_kv = self.single_headed_kv
@@ -693,7 +695,8 @@ class MLPAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
-        D_to_align_z_axis,
+        D,
+        D_inv,
         mask = None
     ):
         one_headed_kv = self.single_headed_kv
@@ -705,7 +708,8 @@ class MLPAttention(nn.Module):
             edge_info = edge_info,
             rel_dist = rel_dist,
             basis = basis,
-            D_to_align_z_axis = D_to_align_z_axis
+            D = D,
+            D_inv = D_inv
         )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
@@ -993,7 +997,8 @@ class Equiformer(nn.Module):
             edge_info,
             rel_dist = neighbor_rel_dist,
             basis = basis_pkg['basis'],
-            D_to_align_z_axis = basis_pkg['D']
+            D = basis_pkg['D'],
+            D_inv = basis_pkg['D_inv'],
         )
 
         # transformer layers
@@ -1002,7 +1007,8 @@ class Equiformer(nn.Module):
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
             basis = basis_pkg['basis'],
-            D_to_align_z_axis = basis_pkg['D'],
+            D = basis_pkg['D'],
+            D_inv = basis_pkg['D_inv'],
             mask = _mask
         )
 
