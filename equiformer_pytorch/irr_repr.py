@@ -154,11 +154,12 @@ def rot_to_euler_angles(R):
     '''
     Rotation matrix to ZYZ Euler angles
     '''
-    alpha = atan2(R[..., 1, 2], R[..., 0, 2])
-    sp, cp = sin(alpha), cos(alpha)
-    beta = atan2(cp * R[..., 0, 2] + sp * R[..., 1, 2], R[..., 2, 2])
-    gamma = atan2(R[..., 1, 2], -R[..., 0, 2])
-    return torch.stack((alpha, beta, gamma), dim = -1)
+    device, dtype = R.device, R.dtype
+    xyz = R @ torch.tensor([0, 0, 1.], device = device, dtype = dtype)
+    a, b = x_to_alpha_beta(xyz)
+    rotz = rot(0, -b, -a) @ R
+    c = atan2(rotz[..., 1, 0], rotz[..., 0, 0])
+    return torch.stack((a, b, c), dim = -1)
 
 def rot_x_to_y_direction(x, y):
     '''
@@ -188,11 +189,26 @@ def compose(a1, b1, c1, a2, b2, c2):
     (a, b, c) = (a1, b1, c1) composed with (a2, b2, c2)
     """
     comp = rot(a1, b1, c1) @ rot(a2, b2, c2)
-    xyz = comp @ torch.tensor([0, 0, 1.], device=comp.device, dtype=comp.dtype)
-    a, b = x_to_alpha_beta(xyz)
-    rotz = rot(0, -b, -a) @ comp
-    c = atan2(rotz[1, 0], rotz[0, 0])
-    return a, b, c
+    return rot_to_euler_angles(comp).unbind(dim = -1)
+
+def compose_tensor(angles1, angles2):
+    angles1, ps1 = pack_one(angles1, '* c')
+    angles2, ps2 = pack_one(angles2, '* c')
+
+    if angles1.shape[0] == 1:
+        angles1 = angles1.expand_as(angles2)
+        ps_out = ps2
+    elif angles2.shape[0] == 1:
+        angles2 = angles2.expand_as(angles1)
+        ps_out = ps1
+    elif angles1.shape[0] == angles2.shape[0]:
+        ps_out = ps1
+    else:
+        raise ValueError('angles are not broadcastable')
+
+    comp = rot_tensor(angles1) @ rot_tensor(angles2)
+    angles_out = rot_to_euler_angles(comp)
+    return unpack_one(angles_out, ps_out, '* c')
 
 def spherical_harmonics(order, alpha, beta, dtype = None):
     return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)

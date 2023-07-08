@@ -24,16 +24,19 @@ CACHE_PATH = CACHE_PATH if not exists(os.environ.get('CLEAR_CACHE')) else None
 
 # todo (figure out why this was hard coded in official repo)
 
-RANDOM_ANGLES = [ 
+RANDOM_ANGLES = torch.tensor([
     [4.41301023, 5.56684102, 4.59384642],
     [4.93325116, 6.12697327, 4.14574096],
     [0.53878964, 4.09050444, 5.36539036],
     [2.16017393, 3.48835314, 5.55174441],
     [2.52385107, 0.2908958, 3.90040975]
-]
+], dtype = torch.float64)
 
 
 # functions
+
+def identity(t):
+    return t
 
 def get_matrix_kernel(A, eps = 1e-10):
     '''
@@ -44,17 +47,11 @@ def get_matrix_kernel(A, eps = 1e-10):
     :param A: matrix
     :return: matrix where each row is a basis vector of the kernel of A
     '''
+    A = rearrange(A, '... d -> (...) d')
     _u, s, v = torch.svd(A)
     kernel = v.t()[s < eps]
     return kernel
 
-
-def get_matrices_kernel(As, eps = 1e-10):
-    '''
-    Computes the common kernel of all the As matrices
-    '''
-    matrix = torch.cat(As, dim=0)
-    return get_matrix_kernel(matrix, eps)
 
 def get_spherical_from_cartesian(cartesian, divide_radius_by = 1.0):
     """
@@ -110,19 +107,23 @@ def kron(a, b):
     return rearrange(res, '... i j k l -> ... (i j) (k l)')
 
 def get_R_tensor(order_out, order_in, a, b, c):
-    return kron(irr_repr(order_out, a, b, c), irr_repr(order_in, a, b, c))
+    angles = torch.stack((a, b, c), dim = -1)
+    return kron(irr_repr_tensor(order_out, angles), irr_repr_tensor(order_in, angles))
 
 def sylvester_submatrix(order_out, order_in, J, a, b, c):
     ''' generate Kronecker product matrix for solving the Sylvester equation in subspace J '''
+    angles = torch.stack((a, b, c), dim = -1)
+
     R_tensor = get_R_tensor(order_out, order_in, a, b, c)  # [m_out * m_in, m_out * m_in]
-    R_irrep_J = irr_repr(J, a, b, c)  # [m, m]
 
-    R_tensor_identity = torch.eye(R_tensor.shape[0])
-    R_irrep_J_identity = torch.eye(R_irrep_J.shape[0])
+    R_irrep_J = irr_repr_tensor(J, angles)  # [m, m]
+    R_irrep_J_T = rearrange(R_irrep_J, '... m n -> ... n m')
 
-    return kron(R_tensor, R_irrep_J_identity) - kron(R_tensor_identity, R_irrep_J.t())  # [(m_out * m_in) * m, (m_out * m_in) * m]
+    R_tensor_identity = torch.eye(R_tensor.shape[-1])
+    R_irrep_J_identity = torch.eye(R_irrep_J.shape[-1])
 
-@cache_dir(CACHE_PATH)
+    return kron(R_tensor, R_irrep_J_identity) - kron(R_tensor_identity, R_irrep_J_T)  # [(m_out * m_in) * m, (m_out * m_in) * m]
+
 @torch_default_dtype(torch.float64)
 @torch.no_grad()
 def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGLES):
@@ -132,10 +133,11 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     :param order_out: order of the output representation
     :return: one part of the Q^-1 matrix of the article
     """
-    sylvester_submatrices = [sylvester_submatrix(order_out, order_in, J, a, b, c) for a, b, c in random_angles]
-    null_space = get_matrices_kernel(sylvester_submatrices)
+    sylvester_submatrices = sylvester_submatrix(order_out, order_in, J, *random_angles.unbind(dim = -1))
+    null_space = get_matrix_kernel(sylvester_submatrices)
+
     assert null_space.size(0) == 1, null_space.size()  # unique subspace solution
-    Q_J = null_space[0]  # [(m_out * m_in) * m]
+    Q_J = null_space[0] # [(m_out * m_in) * m]
 
     Q_J = rearrange(
         Q_J,
@@ -213,7 +215,8 @@ def get_basis_pkg(r_ij, max_degree):
 
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
             # Get spherical harmonic projection matrices
-            Q_J = basis_transformation_Q_J(J, d_in, d_out)
+
+            Q_J = cache_dir(CACHE_PATH)(basis_transformation_Q_J)(J, d_in, d_out)
             Q_J = Q_J.type(dtype).to(device)
 
             # Create kernel from spherical harmonics
