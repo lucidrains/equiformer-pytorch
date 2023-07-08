@@ -124,6 +124,7 @@ def sylvester_submatrix(order_out, order_in, J, a, b, c):
 
     return kron(R_tensor, R_irrep_J_identity) - kron(R_tensor_identity, R_irrep_J_T)  # [(m_out * m_in) * m, (m_out * m_in) * m]
 
+@cache_dir(CACHE_PATH)
 @torch_default_dtype(torch.float64)
 @torch.no_grad()
 def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGLES):
@@ -182,25 +183,25 @@ def get_basis_pkg(r_ij, max_degree):
     # 1. basis
     # 2. irreducible representation D to rotate all r_ij to [0., 1., 0.]
 
-    pkg = dict(
-        basis = dict(),
-        D = dict()
-    )
+    basis = dict()
+    D = dict()
 
     # precompute D
     # 1. compute rotation to [0., 1., 0.]
     # 2. calculate the ZYZ euler angles from that rotation
     # 3. calculate the D irreducible representation from 0 ... max_degree (technically 0 not needed)
 
+    z_axis = torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+
     R = rot_x_to_y_direction(
         r_ij,
-        torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+        z_axis
     )
 
     angles = rot_to_euler_angles(R)
 
     for d in range(max_degree + 1):
-        pkg['D'][d] = irr_repr_tensor(d, angles)
+        D[d] = irr_repr_tensor(d, angles)
 
     # Spherical harmonic basis
 
@@ -216,12 +217,12 @@ def get_basis_pkg(r_ij, max_degree):
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
             # Get spherical harmonic projection matrices
 
-            Q_J = cache_dir(CACHE_PATH)(basis_transformation_Q_J)(J, d_in, d_out)
+            Q_J = basis_transformation_Q_J(J, d_in, d_out)
             Q_J = Q_J.type(dtype).to(device)
 
             # Create kernel from spherical harmonics
-            K_J = torch.matmul(Y[J], Q_J.T)
 
+            K_J = torch.matmul(Y[J], Q_J.T)
             K_Js.append(K_J)
 
         K_Js = rearrange(
@@ -232,6 +233,6 @@ def get_basis_pkg(r_ij, max_degree):
             m = to_order(min(d_in, d_out))
         )
 
-        pkg['basis'][f'{d_in},{d_out}'] = K_Js
+        basis[f'{d_in},{d_out}'] = K_Js
 
-    return pkg
+    return dict(basis = basis, D = D)

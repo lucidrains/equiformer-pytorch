@@ -233,8 +233,7 @@ class DTP(nn.Module):
         project_out = True,     # whether to do a project out after the "tensor product"
         pool = True,
         edge_dim = 0,
-        radial_hidden_dim = 16,
-        splits = 4
+        radial_hidden_dim = 16
     ):
         super().__init__()
         self.fiber_in = fiber_in
@@ -242,7 +241,6 @@ class DTP(nn.Module):
         self.edge_dim = edge_dim
         self.self_interaction = self_interaction
         self.pool = pool
-        self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
 
         self.project_xi_xj = project_xi_xj
         if project_xi_xj:
@@ -275,19 +273,13 @@ class DTP(nn.Module):
         inp,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None
+        basis = None,
+        D = None
     ):
-        splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
 
         kernels = {}
         outputs = {}
-
-        # split basis
-
-        basis_keys = basis.keys()
-        split_basis_values = list(zip(*list(map(lambda t: fast_split(t, splits, dim = 1), basis.values()))))
-        split_basis = list(map(lambda v: dict(zip(basis_keys, v)), split_basis_values))
 
         # neighbors
 
@@ -312,28 +304,22 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
-                x = rearrange(x, 'b i j d m -> b i j (d m) 1')
+                x = rearrange(x, 'b i j d m -> b i j (d m)')
 
                 kernel_fn = self.kernel_unary[etype]
-                edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
-
-                output_chunk = None
-                split_x = fast_split(x, splits, dim = 1)
-                split_edge_features = fast_split(edge_features, splits, dim = 1)
+                edge_features = safe_cat(edges, rel_dist, dim = -1)
 
                 # process input, edges, and basis in chunks along the sequence dimension
 
-                for x_chunk, edge_features, basis in zip(split_x, split_edge_features, split_basis):
-                    kernel = kernel_fn(edge_features, basis = basis)
-                    chunk = einsum('... o i, ... i c -> ... o c', kernel, x_chunk)
-                    output_chunk = safe_cat(output_chunk, chunk, dim = 1)
+                kernel = kernel_fn(edge_features, basis = basis)
+                output_chunk = einsum('... o i, ... i -> ... o', kernel, x)
 
-                output = safe_cat(output, output_chunk, dim = -2)
+                output = safe_cat(output, output_chunk, dim = -1)
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
-            output = rearrange(output, '... (d m) 1 -> ... d m', m = to_order(degree_out))            
+            output = rearrange(output, '... (d m) -> ... d m', m = to_order(degree_out))            
             outputs[degree_out] = output
 
         if not self.self_interaction and not self.project_out:
@@ -392,12 +378,8 @@ class PairwiseTP(nn.Module):
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
 
-        out = 0
-
-        for i in range(R.shape[-1]):
-            out += R[..., i] * B[..., i]
-
-        out = rearrange(out, 'b n h d_out nc_out ... -> b n h (d_out nc_out) (...)')
+        out = (R * B).sum(dim = -1)
+        out = rearrange(out, 'b n h do mo di mi -> b n h (do mo) (di mi)')
         return out
 
 # feed forwards
@@ -523,7 +505,7 @@ class L2DistAttention(nn.Module):
         self.prenorm = Norm(fiber)
 
         self.to_q = Linear(fiber, hidden_fiber)
-        self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_kv = DTP(fiber, kv_hidden_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self)
 
         # linear attention heads
 
@@ -543,6 +525,7 @@ class L2DistAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D,
         mask = None
     ):
         one_head_kv = self.single_headed_kv
@@ -561,7 +544,8 @@ class L2DistAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D = D
         )
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
@@ -660,7 +644,7 @@ class MLPAttention(nn.Module):
 
         # main branch tensor product
 
-        self.to_attn_and_v = DTP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self, splits = splits)
+        self.to_attn_and_v = DTP(fiber, intermediate_fiber, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim, pool = False, self_interaction = attend_self)
 
         # non-linear projection of attention branch into the attention logits
 
@@ -699,6 +683,7 @@ class MLPAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D,
         mask = None
     ):
         one_headed_kv = self.single_headed_kv
@@ -709,7 +694,8 @@ class MLPAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D = D
         )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
@@ -843,8 +829,7 @@ class Equiformer(nn.Module):
             self.dim_in,
             self.dim,
             edge_dim = edge_dim,
-            radial_hidden_dim = radial_hidden_dim,
-            splits = splits
+            radial_hidden_dim = radial_hidden_dim
         )
 
         # trunk
@@ -861,7 +846,6 @@ class Equiformer(nn.Module):
                     dim_head = dim_head,
                     attend_self = attend_self,
                     edge_dim = edge_dim,
-                    splits = splits,
                     single_headed_kv = single_headed_kv,
                     radial_hidden_dim = radial_hidden_dim,
                     **kwargs
@@ -995,7 +979,13 @@ class Equiformer(nn.Module):
 
         # project in
 
-        x = self.tp_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis_pkg['basis'])
+        x = self.tp_in(
+            x,
+            edge_info,
+            rel_dist = neighbor_rel_dist, 
+            basis = basis_pkg['basis'],
+            D = basis_pkg['D']
+        )
 
         # transformer layers
 
@@ -1003,6 +993,7 @@ class Equiformer(nn.Module):
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
             basis = basis_pkg['basis'],
+            D = basis_pkg['D'],
             mask = _mask
         )
 
