@@ -96,52 +96,74 @@ def rot_z(gamma):
     '''
     Rotation around Z axis
     '''
-    return torch.tensor([
-        [cos(gamma), -sin(gamma), 0],
-        [sin(gamma), cos(gamma), 0],
-        [0, 0, 1]
-    ], dtype=gamma.dtype, device=gamma.device)
+    c = cos(gamma)
+    s = sin(gamma)
+    z = torch.zeros_like(gamma)
+    o = torch.ones_like(gamma)
+
+    out = torch.stack((
+        c, -s, z,
+        s, c, z,
+        z, z, o
+    ), dim = -1)
+
+    return rearrange(out, '... (r1 r2) -> ... r1 r2', r1 = 3)
 
 @cast_torch_tensor
 def rot_y(beta):
     '''
     Rotation around Y axis
     '''
-    return torch.tensor([
-        [cos(beta), 0, sin(beta)],
-        [0, 1, 0],
-        [-sin(beta), 0, cos(beta)]
-    ], dtype=beta.dtype, device=beta.device)
+    c = cos(beta)
+    s = sin(beta)
+    z = torch.zeros_like(beta)
+    o = torch.ones_like(beta)
+
+    out = torch.stack((
+        c, z, s,
+        z, o, z,
+        -s, z, c
+    ), dim = -1)
+
+    return rearrange(out, '... (r1 r2) -> ... r1 r2', r1 = 3)
 
 @cast_torch_tensor
 def x_to_alpha_beta(x):
     '''
     Convert point (x, y, z) on the sphere into (alpha, beta)
     '''
-    x = x / torch.norm(x)
-    a0, a1, b1 = x.unbind(dim=0)
+    x = F.normalize(x, dim = -1)
+    a0, a1, b1 = x.unbind(dim = -1)
     beta = acos(b1)
     alpha = atan2(a1, a0)
     return (alpha, beta)
 
-def rot(alpha, beta = None, gamma = None):
+def rot(alpha, beta, gamma):
     '''
     ZYZ Euler angles rotation
     '''
-    if not (exists(beta) or exists(gamma)):
-        alpha, beta, gamma = alpha.unbind(dim = -1)
-
     return rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
+
+def rot_tensor(angles):
+    angles, ps = pack_one(angles, '* a')
+    alpha, beta, gamma = angles.unbind(dim = -1)
+    rotations = rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
+    return unpack_one(rotations, ps, '* r1 r2')
 
 def rot_to_euler_angles(R):
     '''
     Rotation matrix to ZYZ Euler angles
     '''
-    alpha = atan2(R[..., 1, 2], R[..., 0, 2])
-    sp, cp = sin(alpha), cos(alpha)
-    beta = atan2(cp * R[..., 0, 2] + sp * R[..., 1, 2], R[..., 2, 2])
-    gamma = atan2(R[..., 1, 2], -R[..., 0, 2])
-    return torch.stack((alpha, beta, gamma), dim = -1)
+    device, dtype = R.device, R.dtype
+    xyz = R @ torch.tensor([0, 0, 1.], device = device, dtype = dtype)
+    a, b = x_to_alpha_beta(xyz)
+
+    zeroes = torch.zeros_like(b)
+    z_angles = torch.stack((zeroes, -b, -a), dim = -1)
+
+    rotz = rot_tensor(z_angles) @ R
+    c = atan2(rotz[..., 1, 0], rotz[..., 0, 0])
+    return torch.stack((a, b, c), dim = -1)
 
 def rot_x_to_y_direction(x, y):
     '''
@@ -171,11 +193,8 @@ def compose(a1, b1, c1, a2, b2, c2):
     (a, b, c) = (a1, b1, c1) composed with (a2, b2, c2)
     """
     comp = rot(a1, b1, c1) @ rot(a2, b2, c2)
-    xyz = comp @ torch.tensor([0, 0, 1.], device=comp.device, dtype=comp.dtype)
-    a, b = x_to_alpha_beta(xyz)
-    rotz = rot(0, -b, -a) @ comp
-    c = atan2(rotz[1, 0], rotz[0, 0])
-    return a, b, c
+    angles = rot_to_euler_angles(comp)
+    return angles.unbind(dim = -1)
 
 def spherical_harmonics(order, alpha, beta, dtype = None):
     return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)

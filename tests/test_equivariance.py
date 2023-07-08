@@ -35,9 +35,9 @@ def test_equivariance(
     coors = torch.randn(1, 32, 3)
     mask  = torch.ones(1, 32).bool()
 
-    R   = rot(15, 0, 45)
+    R   = rot(*torch.randn(3))
     _, out1 = model(feats, coors @ R, mask)
     out2 = model(feats, coors, mask)[1] @ R
 
-    diff = (out1 - out2).max()
+    diff = (out1 - out2).abs().max()
     assert diff < 1e-4, 'is not equivariant'
