@@ -165,6 +165,7 @@ def rot_x_to_y_direction(x, y):
     '''
     Rotates a vector x to the same direction as vector y
     Taken from https://math.stackexchange.com/a/2672702
+    Turns out there are multiple rotation matrices that can bring one vector to another. Re-examine this taken solution, could be why nothing is working
     '''
     n, dtype, device = x.shape[-1], x.dtype, x.device
 
