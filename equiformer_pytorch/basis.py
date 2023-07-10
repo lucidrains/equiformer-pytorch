@@ -154,14 +154,11 @@ def get_basis(r_ij, max_degree):
             Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
             Q_J = einsum(Q_J, D[J], 'oi f, ... f g -> ... oi g')
 
-            # Create kernel from spherical harmonics
-
-            mo_index = Q_J.shape[-1] // 2
-
-            # aligning edges (r_ij) with z-axis leads to sparse Y_J - thus plucking out mo index
+            # aligning edges (r_ij) with z-axis leads to sparse spherical harmonics (ex. degree 1 [0., 1., 0.]) - thus plucking out only the mo index
             # https://arxiv.org/abs/2206.14331
             # equiformer v2 then normalizes the Y, to remove it altogether
 
+            mo_index = Q_J.shape[-1] // 2
             K_J = Q_J[..., mo_index]
             K_Js.append(K_J)
 
