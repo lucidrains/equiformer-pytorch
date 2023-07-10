@@ -295,7 +295,6 @@ class DTP(nn.Module):
 
             for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
-                Di, Do = D[degree_in], D[degree_out]
 
                 xi, xj = source[degree_in], target[degree_in]
 
@@ -307,7 +306,9 @@ class DTP(nn.Module):
 
                 # multiply by D(R) - rotate to z-axis
 
-                x = einsum('... y n, ... i y -> ... i n', Di, x)
+                if degree_in > 0:
+                    Di = D[degree_in]
+                    x = einsum('... y n, ... i y -> ... i n', Di, x)
 
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = safe_cat(edges, rel_dist, dim = -1)
@@ -320,10 +321,15 @@ class DTP(nn.Module):
 
                 output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
 
-                # multiply by D(R^-1) - rotate back from z-axis
-
-                output_chunk = einsum('... o m, ... x m -> ... o x', output_chunk, Do)
                 output = safe_cat(output, output_chunk, dim = -2)
+
+            # multiply by D(R^-1) - rotate back from z-axis
+
+            if degree_out > 0:
+                Do = D[degree_out]
+                output = einsum('... o m, ... x m -> ... o x', output, Do)
+
+            # pool or not along j (neighbors) dimension
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
