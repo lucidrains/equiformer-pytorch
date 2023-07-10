@@ -107,28 +107,42 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 GetBasisReturn = namedtuple('GetBasisReturn', ['basis', 'D'])
 
 @torch.no_grad()
-def get_basis(r_ij, max_degree):
+def get_basis(max_degree, device, dtype):
     """Return equivariant weight basis (basis)
-
-    Call this function *once* at the start of each forward pass of the model.
-    It computes the equivariant weight basis, W_J^lk(x), and internodal 
-    distances, needed to compute varphi_J^lk(x), of eqn 8 of
-    https://arxiv.org/pdf/2006.10503.pdf. The return values of this function 
-    can be shared as input across all SE(3)-Transformer layers in a model.
-
-    Args:
-        r_ij: relative positional vectors
-        max_degree: non-negative int for degree of highest feature-type
-    Returns:
-        dict of equivariant bases, keys are in form '<d_in><d_out>'
+    assuming edges are aligned to z-axis
     """
+    basis = dict()
+
+    # Equivariant basis (dict['<d_in><d_out>'])
+
+    for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
+        K_Js = []
+
+        for J in range(abs(d_in - d_out), d_in + d_out + 1):
+
+            # Get spherical harmonic projection matrices
+
+            Q_J = basis_transformation_Q_J(J, d_in, d_out).to(device).type(dtype)
+
+            # aligning edges (r_ij) with z-axis leads to sparse spherical harmonics (ex. degree 1 [0., 1., 0.]) - thus plucking out only the mo index
+            # https://arxiv.org/abs/2206.14331
+            # equiformer v2 then normalizes the Y, to remove it altogether
+
+            mo_index = Q_J.shape[-1] // 2
+            K_J = Q_J[..., mo_index]
+
+            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))
+            K_Js.append(K_J)
+
+        K_Js = torch.stack(K_Js, dim = -1)
+        basis[f'{d_in},{d_out}'] = K_Js
+
+    return basis
+
+@torch.no_grad()
+def get_D_to_from_z_axis(r_ij, max_degree):
     device, dtype = r_ij.device, r_ij.dtype
 
-    # Package will include
-    # 1. basis
-    # 2. irreducible representation D to rotate all r_ij to [0., 1., 0.]
-
-    basis = dict()
     D = dict()
 
     # precompute D
@@ -136,7 +150,7 @@ def get_basis(r_ij, max_degree):
     # 2. calculate the ZYZ euler angles from that rotation
     # 3. calculate the D irreducible representation from 0 ... max_degree (technically 0 not needed)
 
-    z_axis = torch.tensor([0., 1., 0.], device = device, dtype = dtype)
+    z_axis = r_ij.new_tensor([0., 1., 0.])
 
     R = rot_x_to_y_direction(r_ij, z_axis)
 
@@ -148,28 +162,4 @@ def get_basis(r_ij, max_degree):
 
         D[d] = irr_repr(d, angles)
 
-    # Equivariant basis (dict['<d_in><d_out>'])
-
-    for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
-        K_Js = []
-
-        for J in range(abs(d_in - d_out), d_in + d_out + 1):
-
-            # Get spherical harmonic projection matrices
-
-            Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
-
-            # aligning edges (r_ij) with z-axis leads to sparse spherical harmonics (ex. degree 1 [0., 1., 0.]) - thus plucking out only the mo index
-            # https://arxiv.org/abs/2206.14331
-            # equiformer v2 then normalizes the Y, to remove it altogether
-
-            mo_index = Q_J.shape[-1] // 2
-            K_J = Q_J[..., mo_index]
-
-            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))            
-            K_Js.append(K_J)
-
-        K_Js = torch.stack(K_Js, dim = -1)
-        basis[f'{d_in},{d_out}'] = K_Js
-
-    return GetBasisReturn(basis, D)
+    return D

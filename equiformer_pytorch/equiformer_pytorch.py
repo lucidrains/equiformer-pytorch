@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from equiformer_pytorch.basis import get_basis
+from equiformer_pytorch.basis import get_basis, get_D_to_from_z_axis
 from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
 from einops import rearrange, repeat, pack, unpack
@@ -870,6 +870,14 @@ class Equiformer(nn.Module):
 
         self.ff_out = proj_out_klass(self.dim, (1,) * self.num_degrees) if reduce_dim_out else None
 
+        # basis is now constant
+
+        self.basis = get_basis(self.num_degrees - 1, device = self.device, dtype = torch.get_default_dtype())
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def forward(
         self,
         feats,
@@ -978,7 +986,7 @@ class Equiformer(nn.Module):
 
         # calculate basis
 
-        pkg = get_basis(neighbor_rel_pos, num_degrees - 1)
+        D = get_D_to_from_z_axis(neighbor_rel_pos, num_degrees - 1)
 
         # main logic
 
@@ -992,8 +1000,8 @@ class Equiformer(nn.Module):
             x,
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist, 
-            basis = pkg.basis,
-            D = pkg.D
+            basis = self.basis,
+            D = D
         )
 
         # transformer layers
@@ -1001,8 +1009,8 @@ class Equiformer(nn.Module):
         attn_kwargs = dict(
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
-            basis = pkg.basis,
-            D = pkg.D,
+            basis = self.basis,
+            D = D,
             mask = _mask
         )
 
