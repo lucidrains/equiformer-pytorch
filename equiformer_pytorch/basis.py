@@ -159,15 +159,11 @@ def get_basis(r_ij, max_degree):
 
             mo_index = Q_J.shape[-1] // 2
             K_J = Q_J[..., mo_index]
+
+            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))
             K_Js.append(K_J)
 
-        K_Js = rearrange(
-            K_Js,
-            'm ... (o i) -> ... 1 o 1 i m',
-            o = to_order(d_out),
-            i = to_order(d_in),
-            m = to_order(min(d_in, d_out))
-        )
+        K_Js = torch.stack(K_Js, dim = -1)
 
         basis[f'{d_in},{d_out}'] = K_Js
 

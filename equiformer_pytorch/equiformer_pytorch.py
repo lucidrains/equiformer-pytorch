@@ -303,22 +303,19 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
-                x = rearrange(x, 'b i j d m -> b i j (d m)')
-
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = safe_cat(edges, rel_dist, dim = -1)
 
                 # process input, edges, and basis in chunks along the sequence dimension
 
                 kernel = kernel_fn(edge_features, basis = basis)
-                output_chunk = einsum('... o i, ... i -> ... o', kernel, x)
+                output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
 
-                output = safe_cat(output, output_chunk, dim = -1)
+                output = safe_cat(output, output_chunk, dim = -2)
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2)
 
-            output = rearrange(output, '... (d m) -> ... d m', m = to_order(degree_out))            
             outputs[degree_out] = output
 
         if not self.self_interaction and not self.project_out:
@@ -373,13 +370,8 @@ class PairwiseTP(nn.Module):
     def forward(self, feat, basis):
         R = self.rp(feat)
         B = basis[f'{self.degree_in},{self.degree_out}']
-
-        # torch.sum(R * B, dim = -1) is too memory intensive
-        # needs to be chunked to reduce peak memory usage
-
-        out = (R * B).sum(dim = -1)
-        out = rearrange(out, 'b n h do mo di mi -> b n h (do mo) (di mi)')
-        return out
+        B = rearrange(B, '... o i m -> ... 1 o 1 i m')
+        return R * B
 
 # feed forwards
 
