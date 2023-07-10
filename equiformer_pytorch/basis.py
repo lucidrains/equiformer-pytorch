@@ -143,6 +143,9 @@ def get_basis(r_ij, max_degree):
     angles = rot_to_euler_angles(R)
 
     for d in range(max_degree + 1):
+        if d == 0:
+            continue
+
         D[d] = irr_repr(d, angles)
 
     # Equivariant basis (dict['<d_in><d_out>'])
@@ -154,9 +157,6 @@ def get_basis(r_ij, max_degree):
 
             # Get spherical harmonic projection matrices
 
-            if J not in D:
-                D[J] = irr_repr(J, angles)
-
             Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
 
             # aligning edges (r_ij) with z-axis leads to sparse spherical harmonics (ex. degree 1 [0., 1., 0.]) - thus plucking out only the mo index
@@ -166,11 +166,10 @@ def get_basis(r_ij, max_degree):
             mo_index = Q_J.shape[-1] // 2
             K_J = Q_J[..., mo_index]
 
-            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))
+            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))            
             K_Js.append(K_J)
 
         K_Js = torch.stack(K_Js, dim = -1)
-
         basis[f'{d_in},{d_out}'] = K_Js
 
     return GetBasisReturn(basis, D)
