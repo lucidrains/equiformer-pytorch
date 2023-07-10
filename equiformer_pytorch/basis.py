@@ -7,14 +7,12 @@ from contextlib import contextmanager, nullcontext
 
 from equiformer_pytorch.irr_repr import (
     irr_repr,
-    spherical_harmonics,
     rot_x_to_y_direction,
     rot_to_euler_angles,
     irr_repr_tensor
 )
 
 from equiformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
-from equiformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
 # constants
 
@@ -30,7 +28,6 @@ RANDOM_ANGLES = torch.tensor([
     [2.16017393, 3.48835314, 5.55174441],
     [2.52385107, 0.2908958, 3.90040975]
 ], dtype = torch.float64)
-
 
 # functions
 
@@ -50,47 +47,6 @@ def get_matrix_kernel(A, eps = 1e-10):
     _u, s, v = torch.svd(A)
     kernel = v.t()[s < eps]
     return kernel
-
-
-def get_spherical_from_cartesian(cartesian, divide_radius_by = 1.0):
-    """
-    # ON ANGLE CONVENTION
-    #
-    # sh has following convention for angles:
-    # :param theta: the colatitude / polar angle, ranging from 0(North Pole, (X, Y, Z) = (0, 0, 1)) to pi(South Pole, (X, Y, Z) = (0, 0, -1)).
-    # :param phi: the longitude / azimuthal angle, ranging from 0 to 2 pi.
-    #
-    # the 3D steerable CNN code therefore (probably) has the following convention for alpha and beta:
-    # beta = pi - theta; ranging from 0(South Pole, (X, Y, Z) = (0, 0, -1)) to pi(North Pole, (X, Y, Z) = (0, 0, 1)).
-    # alpha = phi
-    #
-    """
-    # initialise return array
-    spherical = torch.zeros_like(cartesian)
-
-    # indices for return array
-    ind_radius, ind_alpha, ind_beta = 0, 1, 2
-
-    cartesian_y, cartesian_z, cartesian_x  = cartesian.unbind(dim = -1)
-
-    # get projected radius in xy plane
-    r_xy = cartesian_x ** 2 + cartesian_y ** 2
-
-    # get second angle
-    # version 'elevation angle defined from Z-axis down'
-    spherical[..., ind_beta] = torch.atan2(torch.sqrt(r_xy), cartesian_z)
-
-    # get angle in x-y plane
-    spherical[...,ind_alpha] = torch.atan2(cartesian_y, cartesian_x)
-
-    # get overall radius
-    radius = torch.sqrt(r_xy + cartesian_z ** 2)
-
-    if divide_radius_by != 1.0:
-        radius /= divide_radius_by
-
-    spherical[..., ind_radius] = radius
-    return spherical
 
 def kron(a, b):
     """
@@ -147,19 +103,6 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 
     return Q_J.float()  # [m_out * m_in, m]
 
-def precompute_sh(r_ij, max_J):
-    """
-    pre-comput spherical harmonics up to order max_J
-
-    :param r_ij: relative positions
-    :param max_J: maximum order used in entire network
-    :return: dict where each entry has shape [B,N,K,2J+1]
-    """
-    _, alpha, beta = r_ij.unbind(dim = -1)
-    Y_Js = {J: spherical_harmonics(J, alpha, beta) for J in range(max_J + 1)}
-    clear_spherical_harmonics_cache()
-    return Y_Js
-
 @torch.no_grad()
 def get_basis(r_ij, max_degree):
     """Return equivariant weight basis (basis)
@@ -196,12 +139,6 @@ def get_basis(r_ij, max_degree):
 
     angles = rot_to_euler_angles(R)
 
-    # Spherical harmonic basis
-
-    z_axis_sph = get_spherical_from_cartesian(z_axis)
-
-    Y = precompute_sh(z_axis_sph, 2 * max_degree)
-
     # Equivariant basis (dict['<d_in><d_out>'])
 
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
@@ -220,12 +157,15 @@ def get_basis(r_ij, max_degree):
             Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
             Q_J = einsum(Q_J, D[J], 'oi f, ... f g -> ... oi g')
 
-            Y_J = Y[J]
-
             # Create kernel from spherical harmonics
 
-            m0 = Y_J.shape[-1] // 2
-            K_J = Y_J[m0] * Q_J[..., m0]
+            mo_index = Q_J.shape[-1] // 2
+
+            # aligning edges (r_ij) with z-axis leads to sparse Y_J - thus plucking out mo index
+            # https://arxiv.org/abs/2206.14331
+            # equiformer v2 then normalizes the Y, to remove it altogether
+
+            K_J = Q_J[..., mo_index]
             K_Js.append(K_J)
 
         K_Js = rearrange(

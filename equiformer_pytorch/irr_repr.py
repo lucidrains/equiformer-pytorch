@@ -12,7 +12,6 @@ from torch import sin, cos, atan2, acos
 from einops import rearrange, pack, unpack
 
 from equiformer_pytorch.utils import exists, default, cast_torch_tensor, to_order
-from equiformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
 DATA_PATH = path = Path(os.path.dirname(__file__)) / 'data'
 
@@ -201,6 +200,3 @@ def compose(a1, b1, c1, a2, b2, c2):
     rotz = rot(0, -b, -a) @ comp
     c = atan2(rotz[1, 0], rotz[0, 0])
     return a, b, c
-
-def spherical_harmonics(order, alpha, beta, dtype = None):
-    return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)
