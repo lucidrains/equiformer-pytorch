@@ -61,7 +61,7 @@ out.type1 # equivariant type 1  - (1, 128, 3)
 
 ## Testing
 
-Tests for spherical harmonics, network equivariance etc
+Tests for equivariance etc
 
 ```bash
 $ python setup.py test
