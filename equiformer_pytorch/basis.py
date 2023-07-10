@@ -6,10 +6,9 @@ from itertools import product
 from contextlib import contextmanager, nullcontext
 
 from equiformer_pytorch.irr_repr import (
-    irr_repr,
     rot_x_to_y_direction,
     rot_to_euler_angles,
-    irr_repr_tensor
+    irr_repr
 )
 
 from equiformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
@@ -63,7 +62,7 @@ def kron(a, b):
 
 def get_R_tensor(order_out, order_in, a, b, c):
     angles = torch.stack((a, b, c), dim = -1)
-    return kron(irr_repr_tensor(order_out, angles), irr_repr_tensor(order_in, angles))
+    return kron(irr_repr(order_out, angles), irr_repr(order_in, angles))
 
 def sylvester_submatrix(order_out, order_in, J, a, b, c):
     ''' generate Kronecker product matrix for solving the Sylvester equation in subspace J '''
@@ -71,7 +70,7 @@ def sylvester_submatrix(order_out, order_in, J, a, b, c):
 
     R_tensor = get_R_tensor(order_out, order_in, a, b, c)  # [m_out * m_in, m_out * m_in]
 
-    R_irrep_J = irr_repr_tensor(J, angles)  # [m, m]
+    R_irrep_J = irr_repr(J, angles)  # [m, m]
     R_irrep_J_T = rearrange(R_irrep_J, '... m n -> ... n m')
 
     R_tensor_identity = torch.eye(R_tensor.shape[-1])
@@ -149,7 +148,7 @@ def get_basis(r_ij, max_degree):
             # Get spherical harmonic projection matrices
 
             if J not in D:
-                D[J] = irr_repr_tensor(J, angles)
+                D[J] = irr_repr(J, angles)
 
             Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
             Q_J = einsum(Q_J, D[J], 'oi f, ... f g -> ... oi g')

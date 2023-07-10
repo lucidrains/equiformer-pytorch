@@ -68,20 +68,7 @@ def z_rot_mat(angle, l):
     m[batch_range, inds, inds] = cos(frequencies * angle[..., None])
     return m
 
-def irr_repr(order, alpha, beta, gamma, dtype = None, device = None):
-    """
-    irreducible representation of SO3
-    - compatible with compose and spherical_harmonics
-    """
-    cast_ = cast_torch_tensor(identity)
-    dtype = default(dtype, torch.get_default_dtype())
-    alpha, beta, gamma = map(cast_, (alpha, beta, gamma))
-    alpha, beta, gamma = map(lambda t: t[None], (alpha, beta, gamma))
-
-    rep = wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype, device = device)
-    return rearrange(rep, '1 ... -> ...')
-
-def irr_repr_tensor(order, angles):
+def irr_repr(order, angles):
     """
     irreducible representation of SO3 - accepts multiple angles in tensor
     """
@@ -129,28 +116,11 @@ def rot_y(beta):
 
     return rearrange(out, '... (r1 r2) -> ... r1 r2', r1 = 3)
 
-@cast_torch_tensor
-def x_to_alpha_beta(x):
-    '''
-    Convert point (x, y, z) on the sphere into (alpha, beta)
-    '''
-    x = F.normalize(x, dim = -1)
-    a0, a1, b1 = x.unbind(dim = -1)
-    beta = acos(b1)
-    alpha = atan2(a1, a0)
-    return (alpha, beta)
-
 def rot(alpha, beta, gamma):
     '''
     ZYZ Euler angles rotation
     '''
     return rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
-
-def rot_tensor(angles):
-    angles, ps = pack_one(angles, '* a')
-    alpha, beta, gamma = angles.unbind(dim = -1)
-    rotations = rot_z(alpha) @ rot_y(beta) @ rot_z(gamma)
-    return unpack_one(rotations, ps, '* r1 r2')
 
 def rot_to_euler_angles(R):
     '''
@@ -189,14 +159,3 @@ def rot_x_to_y_direction(x, y):
 
     R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
     return R.type(dtype)
-
-def compose(a1, b1, c1, a2, b2, c2):
-    """
-    (a, b, c) = (a1, b1, c1) composed with (a2, b2, c2)
-    """
-    comp = rot(a1, b1, c1) @ rot(a2, b2, c2)
-    xyz = comp @ torch.tensor([0, 0, 1.])
-    a, b = x_to_alpha_beta(xyz)
-    rotz = rot(0, -b, -a) @ comp
-    c = atan2(rotz[1, 0], rotz[0, 0])
-    return a, b, c
