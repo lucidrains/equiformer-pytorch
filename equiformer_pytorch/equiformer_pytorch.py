@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from equiformer_pytorch.basis import get_basis_pkg
+from equiformer_pytorch.basis import get_basis
 from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
 
 from einops import rearrange, repeat, pack, unpack
@@ -273,8 +273,7 @@ class DTP(nn.Module):
         inp,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None,
-        D = None
+        basis = None
     ):
         neighbor_indices, neighbor_masks, edges = edge_info
 
@@ -525,7 +524,6 @@ class L2DistAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
-        D,
         mask = None
     ):
         one_head_kv = self.single_headed_kv
@@ -544,8 +542,7 @@ class L2DistAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis,
-            D = D
+            basis = basis
         )
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
@@ -683,7 +680,6 @@ class MLPAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
-        D,
         mask = None
     ):
         one_headed_kv = self.single_headed_kv
@@ -694,8 +690,7 @@ class MLPAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis,
-            D = D
+            basis = basis
         )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
@@ -969,7 +964,7 @@ class Equiformer(nn.Module):
 
         # calculate basis
 
-        basis_pkg = get_basis_pkg(neighbor_rel_pos, num_degrees - 1)
+        basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 
         # main logic
 
@@ -983,8 +978,7 @@ class Equiformer(nn.Module):
             x,
             edge_info,
             rel_dist = neighbor_rel_dist, 
-            basis = basis_pkg['basis'],
-            D = basis_pkg['D']
+            basis = basis
         )
 
         # transformer layers
@@ -992,8 +986,7 @@ class Equiformer(nn.Module):
         attn_kwargs = dict(
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
-            basis = basis_pkg['basis'],
-            D = basis_pkg['D'],
+            basis = basis,
             mask = _mask
         )
 

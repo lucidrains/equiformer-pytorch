@@ -1,8 +1,7 @@
 import os
 from math import pi
 import torch
-from torch import einsum
-from einops import rearrange, repeat
+from einops import rearrange, repeat, einsum
 from itertools import product
 from contextlib import contextmanager, nullcontext
 
@@ -103,7 +102,7 @@ def kron(a, b):
     :type b: torch.Tensor
     :rtype: torch.Tensor
     """
-    res = einsum('... i j, ... k l -> ... i k j l', a, b)
+    res = einsum(a, b, '... i j, ... k l -> ... i k j l')
     return rearrange(res, '... i j k l -> ... (i j) (k l)')
 
 def get_R_tensor(order_out, order_in, a, b, c):
@@ -162,7 +161,7 @@ def precompute_sh(r_ij, max_J):
     return Y_Js
 
 @torch.no_grad()
-def get_basis_pkg(r_ij, max_degree):
+def get_basis(r_ij, max_degree):
     """Return equivariant weight basis (basis)
 
     Call this function *once* at the start of each forward pass of the model.
@@ -193,36 +192,40 @@ def get_basis_pkg(r_ij, max_degree):
 
     z_axis = torch.tensor([0., 1., 0.], device = device, dtype = dtype)
 
-    R = rot_x_to_y_direction(
-        r_ij,
-        z_axis
-    )
+    R = rot_x_to_y_direction(r_ij, z_axis)
 
     angles = rot_to_euler_angles(R)
 
-    for d in range(max_degree + 1):
-        D[d] = irr_repr_tensor(d, angles)
-
     # Spherical harmonic basis
 
-    r_ij_spherical = get_spherical_from_cartesian(r_ij)
+    z_axis_sph = get_spherical_from_cartesian(z_axis)
 
-    Y = precompute_sh(r_ij_spherical, 2 * max_degree)
+    Y = precompute_sh(z_axis_sph, 2 * max_degree)
 
     # Equivariant basis (dict['<d_in><d_out>'])
 
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
 
+        if d_in not in D:
+            D[d_in] = irr_repr_tensor(d_in, angles)
+
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
+
             # Get spherical harmonic projection matrices
 
-            Q_J = basis_transformation_Q_J(J, d_in, d_out)
-            Q_J = Q_J.type(dtype).to(device)
+            if J not in D:
+                D[J] = irr_repr_tensor(J, angles)
+
+            Q_J = basis_transformation_Q_J(J, d_in, d_out).to(r_ij)
+            Q_J = einsum(Q_J, D[J], 'oi f, ... f g -> ... oi g')
+
+            Y_J = Y[J]
 
             # Create kernel from spherical harmonics
 
-            K_J = torch.matmul(Y[J], Q_J.T)
+            m0 = Y_J.shape[-1] // 2
+            K_J = Y_J[m0] * Q_J[..., m0]
             K_Js.append(K_J)
 
         K_Js = rearrange(
@@ -235,4 +238,4 @@ def get_basis_pkg(r_ij, max_degree):
 
         basis[f'{d_in},{d_out}'] = K_Js
 
-    return dict(basis = basis, D = D)
+    return basis

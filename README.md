@@ -93,9 +93,11 @@ $ python denoise.py
     - [x] add rotation matrix -> ZYZ euler angles
     - [x] function for deriving rotation matrix for r_ij -> (0, 1, 0)
     - [x] prepare get_basis to return D for rotating representations to (0, 1, 0) to greatly simplify spherical harmonics
-    - [ ] add tests for batch rotating vectors to align with another - handle edge cases (0, 0, 0)?
-    - [ ] redo get_basis to only calculate spherical harmonics Y for (0, 1, 0) and cache
+    - [x] add tests for batch rotating vectors to align with another - handle edge cases (0, 0, 0)?
+    - [x] redo get_basis to only calculate spherical harmonics Y for (0, 1, 0) and cache
     - [ ] validate order of magnitude speed up and reach for higher degrees
+    - [ ] do the further optimization to remove clebsch gordan (since m_i only depends on m_o), as noted in eSCN paper
+    - [ ] refactor into full so3 -> so2 linear layer, as proposed in eSCN paper
     - [ ] add equiformer v2, and start looking into equivariant protein backbone diffusion again
 
 ## Citations
