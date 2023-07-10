@@ -144,9 +144,6 @@ def get_basis(r_ij, max_degree):
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
 
-        if d_in not in D:
-            D[d_in] = irr_repr_tensor(d_in, angles)
-
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
 
             # Get spherical harmonic projection matrices
