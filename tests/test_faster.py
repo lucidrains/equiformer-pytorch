@@ -41,14 +41,16 @@ def test_faster_equivariance():
 
         # the rotation to z-axis
 
-        R = rot_x_to_y_direction(coors, z_axis)
+        R      = rot_x_to_y_direction(coors, z_axis)
+        angles = rot_to_euler_angles(R)
+        D      = irr_repr_tensor(1, angles)
 
         # rest of the calculation
 
         coors_sph = get_spherical_from_cartesian(z_axis)
         Y = precompute_sh(coors_sph, 2)[1]
 
-        Q_J = basis_transformation_Q_J(1, 0, 1).to(coors) @ R
+        Q_J = basis_transformation_Q_J(1, 0, 1).to(coors) @ D
 
         # faster because Y is now sparse
 
