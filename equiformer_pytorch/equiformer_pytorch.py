@@ -271,9 +271,10 @@ class DTP(nn.Module):
     def forward(
         self,
         inp,
+        basis,
+        D,
         edge_info: EdgeInfo,
         rel_dist = None,
-        basis = None
     ):
         neighbor_indices, neighbor_masks, edges = edge_info
 
@@ -309,8 +310,10 @@ class DTP(nn.Module):
                 # process input, edges, and basis in chunks along the sequence dimension
 
                 kernel = kernel_fn(edge_features, basis = basis)
-                output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
 
+                Di, Do = D[degree_in], D[degree_out]
+
+                output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
                 output = safe_cat(output, output_chunk, dim = -2)
 
             if self.pool:
@@ -516,6 +519,7 @@ class L2DistAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D,
         mask = None
     ):
         one_head_kv = self.single_headed_kv
@@ -534,7 +538,8 @@ class L2DistAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D = D
         )
 
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
@@ -672,6 +677,7 @@ class MLPAttention(nn.Module):
         edge_info: EdgeInfo,
         rel_dist,
         basis,
+        D,
         mask = None
     ):
         one_headed_kv = self.single_headed_kv
@@ -682,7 +688,8 @@ class MLPAttention(nn.Module):
             features,
             edge_info = edge_info,
             rel_dist = rel_dist,
-            basis = basis
+            basis = basis,
+            D = D
         )
 
         *attn_branch_type0, value_branch_type0 = intermediate[0].split(self.intermediate_type0_split, dim = -2)
@@ -956,7 +963,7 @@ class Equiformer(nn.Module):
 
         # calculate basis
 
-        basis = get_basis(neighbor_rel_pos, num_degrees - 1)
+        pkg = get_basis(neighbor_rel_pos, num_degrees - 1)
 
         # main logic
 
@@ -968,9 +975,10 @@ class Equiformer(nn.Module):
 
         x = self.tp_in(
             x,
-            edge_info,
+            edge_info = edge_info,
             rel_dist = neighbor_rel_dist, 
-            basis = basis
+            basis = pkg.basis,
+            D = pkg.D
         )
 
         # transformer layers
@@ -978,7 +986,8 @@ class Equiformer(nn.Module):
         attn_kwargs = dict(
             edge_info = edge_info,
             rel_dist = neighbor_rel_dist,
-            basis = basis,
+            basis = pkg.basis,
+            D = pkg.D,
             mask = _mask
         )
 

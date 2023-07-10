@@ -1,9 +1,11 @@
 import os
 from math import pi
-import torch
-from einops import rearrange, repeat, einsum
 from itertools import product
 from contextlib import contextmanager, nullcontext
+from collections import namedtuple
+
+import torch
+from einops import rearrange, repeat, einsum
 
 from equiformer_pytorch.irr_repr import (
     rot_x_to_y_direction,
@@ -102,6 +104,8 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 
     return Q_J.float()  # [m_out * m_in, m]
 
+GetBasisReturn = namedtuple('GetBasisReturn', ['basis', 'D'])
+
 @torch.no_grad()
 def get_basis(r_ij, max_degree):
     """Return equivariant weight basis (basis)
@@ -138,6 +142,9 @@ def get_basis(r_ij, max_degree):
 
     angles = rot_to_euler_angles(R)
 
+    for d in range(max_degree + 1):
+        D[d] = irr_repr(d, angles)
+
     # Equivariant basis (dict['<d_in><d_out>'])
 
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
@@ -167,4 +174,4 @@ def get_basis(r_ij, max_degree):
 
         basis[f'{d_in},{d_out}'] = K_Js
 
-    return basis
+    return GetBasisReturn(basis, D)
