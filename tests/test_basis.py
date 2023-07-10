@@ -13,3 +13,9 @@ def test_basis_transformation_Q_J():
     J, order_out, order_in = 1, 1, 1
     Q_J = basis_transformation_Q_J(J, order_in, order_out).float()
     assert torch.allclose(get_R_tensor(order_out, order_in, *rand_angles.unbind(dim = -1)) @ Q_J, Q_J @ irr_repr(J, rand_angles))
+
+def test_basis_transformation_Q_J_sparse():
+    rand_angles = torch.rand(4, 3)
+    J, order_out, order_in = 1, 1, 1
+    Q_J = basis_transformation_Q_J(J, order_in, order_out).float()
+    assert torch.allclose(get_R_tensor(order_out, order_in, *rand_angles.unbind(dim = -1)) @ Q_J[..., 0], (Q_J @ irr_repr(J, rand_angles))[..., 0])
