@@ -11,7 +11,19 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from equiformer_pytorch.basis import get_basis, get_D_to_from_z_axis
-from equiformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order, cast_tuple, safe_cat, fast_split
+
+from equiformer_pytorch.utils import (
+    exists,
+    default,
+    batched_index_select,
+    masked_mean,
+    to_order,
+    cast_tuple,
+    safe_cat,
+    fast_split,
+    slice_for_centering_y_to_x,
+    pad_for_centering_y_to_x
+)
 
 from einops import rearrange, repeat, pack, unpack
 from einops.layers.torch import Rearrange
@@ -290,11 +302,15 @@ class DTP(nn.Module):
 
         # go through every permutation of input degree type to output degree type
 
-        for degree_out, m_out in enumerate(self.fiber_out):
+        for degree_out, _ in enumerate(self.fiber_out):
             output = None
+            m_out = to_order(degree_out)
 
-            for degree_in, m_in in enumerate(self.fiber_in):
+            for degree_in, _ in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
+
+                m_in = to_order(degree_in)
+                m_min = min(m_in, m_out)
 
                 xi, xj = source[degree_in], target[degree_in]
 
@@ -310,16 +326,27 @@ class DTP(nn.Module):
                     Di = D[degree_in]
                     x = einsum('... y n, ... i y -> ... i n', Di, x)
 
-                kernel_fn = self.kernel_unary[etype]
-                edge_features = safe_cat(edges, rel_dist, dim = -1)
+                # remove some 0s if degree_in != degree_out
+
+                maybe_input_slice = slice_for_centering_y_to_x(m_in, m_min)
+                maybe_output_pad = pad_for_centering_y_to_x(m_out, m_min)
+
+                x = x[..., maybe_input_slice]
 
                 # process input, edges, and basis in chunks along the sequence dimension
+
+                kernel_fn = self.kernel_unary[etype]
+                edge_features = safe_cat(edges, rel_dist, dim = -1)
 
                 kernel = kernel_fn(edge_features, basis = basis)
 
                 # todo - make efficient as (m, n) is sparse, bringing us to the so(2) connection
 
                 output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
+
+                # in the case that degree_out < degree_in
+
+                output_chunk = F.pad(output_chunk, (maybe_output_pad, maybe_output_pad), value = 0.)
 
                 output = safe_cat(output, output_chunk, dim = -2)
 

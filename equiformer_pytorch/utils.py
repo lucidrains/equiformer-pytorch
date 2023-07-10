@@ -21,6 +21,18 @@ def default(val, d):
 def to_order(degree):
     return 2 * degree + 1
 
+def pad_for_centering_y_to_x(x, y):
+    assert y <= x
+    total_pad = x - y
+    assert (total_pad % 2) == 0
+    return total_pad // 2
+
+def slice_for_centering_y_to_x(x, y):
+    pad = pad_for_centering_y_to_x(x, y)
+    if pad == 0:
+        return slice(None)
+    return slice(pad, -pad)
+
 def safe_cat(arr, el, dim):
     if not exists(arr):
         return el

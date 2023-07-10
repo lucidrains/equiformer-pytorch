@@ -13,7 +13,14 @@ from equiformer_pytorch.irr_repr import (
     irr_repr
 )
 
-from equiformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
+from equiformer_pytorch.utils import (
+    torch_default_dtype,
+    cache_dir,
+    exists,
+    default,
+    to_order,
+    slice_for_centering_y_to_x
+)
 
 # constants
 
@@ -104,8 +111,6 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 
     return Q_J.float()  # [m_out * m_in, m]
 
-GetBasisReturn = namedtuple('GetBasisReturn', ['basis', 'D'])
-
 @torch.no_grad()
 def get_basis(max_degree, device, dtype):
     """Return equivariant weight basis (basis)
@@ -118,6 +123,11 @@ def get_basis(max_degree, device, dtype):
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
 
+        d_min = min(d_in, d_out)
+
+        m_in, m_out, m_min = map(to_order, (d_in, d_out, d_min))
+        slice_in, slice_out = map(lambda t: slice_for_centering_y_to_x(t, m_min), (m_in, m_out))
+
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
 
             # Get spherical harmonic projection matrices
@@ -128,10 +138,14 @@ def get_basis(max_degree, device, dtype):
             # https://arxiv.org/abs/2206.14331
             # equiformer v2 then normalizes the Y, to remove it altogether
 
-            mo_index = Q_J.shape[-1] // 2
+            mo_index = J
             K_J = Q_J[..., mo_index]
 
-            K_J = rearrange(K_J, '... (o i) -> ... o i', o = to_order(d_out))
+            K_J = rearrange(K_J, '... (o i) -> ... o i', o = m_out)
+
+            K_J = K_J[..., slice_out, slice_in]
+            assert K_J.shape[-1] == K_J.shape[-2]
+
             K_Js.append(K_J)
 
         K_Js = torch.stack(K_Js, dim = -1)
