@@ -295,6 +295,7 @@ class DTP(nn.Module):
 
             for degree_in, m_in in enumerate(self.fiber_in):
                 etype = f'({degree_in},{degree_out})'
+                Di, Do = D[degree_in], D[degree_out]
 
                 xi, xj = source[degree_in], target[degree_in]
 
@@ -304,6 +305,10 @@ class DTP(nn.Module):
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
                     x = x + xi
 
+                # multiply by D(R) - rotate to z-axis
+
+                x = einsum('... y n, ... i y -> ... i n', Di, x)
+
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = safe_cat(edges, rel_dist, dim = -1)
 
@@ -311,9 +316,13 @@ class DTP(nn.Module):
 
                 kernel = kernel_fn(edge_features, basis = basis)
 
-                Di, Do = D[degree_in], D[degree_out]
+                # todo - make efficient as (m, n) is sparse, bringing us to the so(2) connection
 
                 output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
+
+                # multiply by D(R^-1) - rotate back from z-axis
+
+                output_chunk = einsum('... o m, ... x m -> ... o x', output_chunk, Do)
                 output = safe_cat(output, output_chunk, dim = -2)
 
             if self.pool:
