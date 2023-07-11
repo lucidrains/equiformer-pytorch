@@ -6,19 +6,9 @@ Implementation of the <a href="https://arxiv.org/abs/2206.11990">Equiformer</a>,
 
 The design of this seems to build off of <a href="https://arxiv.org/abs/2006.10503">SE3 Transformers</a>, with the dot product attention replaced with MLP Attention and non-linear message passing from <a href="https://arxiv.org/abs/2105.14491">GATv2</a>. It also does a depthwise tensor product for a bit more efficiency. If you think I am mistakened, please feel free to email me.
 
-Will report how it does on my toy task compared to some other networks I am more familiar with, once construction is complete.
+There has been a new development that makes scaling the number of degrees for SE3 equivariant networks dramatically better! <a href="https://arxiv.org/abs/2206.14331">This paper</a> first noted that by aligning the representations along the z-axis (or y-axis by some other convention), the spherical harmonics become sparse. This removes the m<sub>f</sub> dimension from the equation. <a href="https://arxiv.org/abs/2302.03655">A follow up paper</a> from Passaro et al. noted the Clebsch Gordan matrix has also become sparse, leading to removal of m<sub>i</sub> and l<sub>f</sub>. They also made the connection that the problem has been reduced from SO(3) to SO(2) after aligning the reps to one axis. <a href="https://arxiv.org/abs/2306.12059">Equiformer v2</a> (<a href="https://github.com/atomicarchitects/equiformer_v2">Official repository</a>) leverages this in a transformer-like framework to reach new SOTA.
 
-This repository may eventually contain an implementation of EquiFold as well, with the added FAPE loss + structural violation checks
-
-Update: The choice of the norm or gating (still need to ablate to figure out which [or both?]) is contributing to the greatly improved results. however, MLP attention does not seem to be doing anything (caveat, still missing a DTP in the values branch, and of course, need to check for bugs). more experiments pending
-
-Update: Nevermind, MLP attention seems to be working, but about the same as dot product attention.
-
-Update: By using the negative of the euclidean distance for dot product of higher types in dot product attention (as done in the coordinate branch of <a href="https://github.com/lucidrains/invariant-point-attention/blob/main/invariant_point_attention/invariant_point_attention.py#L175">IPA</a> of alphafold2), I now see results that are far better than before as well as MLP attention. My conclusion is that the choice of norm and gating is contributing way more to the results in the paper than MLP attention
-
-<a href="https://wandb.ai/lucidrains/equiformer/reports/equiformer-and-mlp-attention---VmlldzozMDQwMTY3?accessToken=xmj0a1c80m8hehylrmbr0hndka8kk1vxmdrmvtmy7r1qgphtnuhq1643cb76zgfo">Running experiment, denoising residue positions in protein sequence</a>
-
-If you see a signal with this architecture, please consider sharing your findings at <a href="https://openbioml.org/">OpenBioML</a>
+Will definitely be putting more work / exploration into this. For now, I've incorporated the tricks from the first two paper for Equiformer v1, save for complete conversion into SO(2).
 
 ## Install
 
