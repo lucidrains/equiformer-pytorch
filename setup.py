@@ -25,15 +25,12 @@ setup(
     'beartype',
     'einops>=0.6',
     'filelock',
-    'numpy',
     'torch>=1.6',
   ],
   setup_requires=[
     'pytest-runner',
   ],
   tests_require=[
-    'lie_learn',
-    'numpy',
     'pytest'
   ],
   include_package_data = True,

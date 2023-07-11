@@ -3,8 +3,6 @@ from math import pi
 from pathlib import Path
 from functools import wraps, partial
 
-import numpy as np
-
 import torch
 import torch.nn.functional as F
 from torch import sin, cos, atan2, acos
@@ -21,14 +19,8 @@ from equiformer_pytorch.utils import (
 )
 
 DATA_PATH = path = Path(os.path.dirname(__file__)) / 'data'
-
-try:
-    path = DATA_PATH / 'J_dense.pt'
-    Jd = torch.load(str(path))
-except:
-    path = DATA_PATH / 'J_dense.npy'
-    Jd_np = np.load(str(path), allow_pickle = True)
-    Jd = list(map(torch.from_numpy, Jd_np))
+path = DATA_PATH / 'J_dense.pt'
+Jd = torch.load(str(path))
 
 def pack_one(t, pattern):
     return pack([t], pattern)
