@@ -10,6 +10,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from opt_einsum import contract as opt_einsum
+
 from equiformer_pytorch.basis import get_basis, get_D_to_from_z_axis
 
 from equiformer_pytorch.utils import (
@@ -270,7 +272,7 @@ class DTP(nn.Module):
             for degree_in, (dim_in, dim_out_from_degree_in) in enumerate(zip(self.fiber_in, split_dim_out)):
                 degree_min = min(degree_out, degree_in)
 
-                self.kernel_unary[f'({degree_in},{degree_out})'] = PairwiseTP(degree_in, dim_in, degree_out, dim_out_from_degree_in, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
+                self.kernel_unary[f'({degree_in},{degree_out})'] = Radial(degree_in, dim_in, degree_out, dim_out_from_degree_in, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
 
         # whether a single token is self-interacting
 
@@ -344,16 +346,17 @@ class DTP(nn.Module):
                 kernel_fn = self.kernel_unary[etype]
                 edge_features = safe_cat(edges, rel_dist, dim = -1)
 
-                kernel = kernel_fn(edge_features, basis = basis)
+                B = basis.get(etype, None)
+                R = kernel_fn(edge_features)
 
                 # mo depends only on mi (or other way around), removing yet another dimension
 
-                if degree_in == 0 or degree_out == 0:
-                    output_chunk = einsum(kernel, x, '... lo li mi mf, ... li mi -> ... lo mi')
+                if not exists(B): # degree_in or degree_out is 0
+                    output_chunk = einsum(R, x, '... lo li, ... li mi -> ... lo mi')
                 else:
                     y = x.clone()
 
-                    x = repeat(x, '... mi -> ... mi mf r', mf = (kernel.shape[-1] + 1) // 2, r = 2) # mf + 1, so that mf can be divided in 2
+                    x = repeat(x, '... mi -> ... mi mf r', mf = (B.shape[-1] + 1) // 2, r = 2) # mf + 1, so that mf can be divided in 2
                     x, x_to_flip = x.unbind(dim = -1)
 
                     x_flipped = torch.flip(x_to_flip, dims = (-2,)) # flip on the mi axis, as the basis alternates between diagonal and flipped diagonal across mf
@@ -361,7 +364,7 @@ class DTP(nn.Module):
                     x = rearrange(x, '... mf r -> ... (mf r)', r = 2)
                     x = x[..., :-1]
 
-                    output_chunk = einsum(kernel, x, '... lo li mi mf, ... li mi mf -> ... lo mi')
+                    output_chunk = opt_einsum('... o i, m f, ... i m f -> ... o m', R, B, x)
 
                 # in the case that degree_out < degree_in
 
@@ -397,7 +400,7 @@ class DTP(nn.Module):
         outputs = {degree: torch.cat(tensors, dim = -3) for degree, tensors in enumerate(zip(self_interact_out.values(), outputs.values()))}
         return outputs
 
-class PairwiseTP(nn.Module):
+class Radial(nn.Module):
     def __init__(
         self,
         degree_in,
@@ -427,18 +430,11 @@ class PairwiseTP(nn.Module):
             nn.SiLU(),
             LayerNorm(mid_dim),
             nn.Linear(mid_dim, nc_in * nc_out),
-            Rearrange('... (lo li) -> ... lo li 1 1', li = nc_in, lo = nc_out)
+            Rearrange('... (lo li) -> ... lo li', li = nc_in, lo = nc_out)
         )
 
-    def forward(self, feat, basis):
-        R = self.rp(feat)
-
-        if self.degree_in == 0 or self.degree_out == 0:
-            # if either input or output degrees are 0, clebsch gordan becomes a single constant multiplicative value, subsumed by the learned parameters
-            return R
-
-        B = basis[f'{self.degree_in},{self.degree_out}'] # (mi, mf)
-        return R * B
+    def forward(self, feat):
+        return self.rp(feat)
 
 # feed forwards
 

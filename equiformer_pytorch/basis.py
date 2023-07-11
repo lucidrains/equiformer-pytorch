@@ -151,7 +151,7 @@ def get_basis(max_degree):
 
         K_Js = torch.stack(K_Js, dim = -1)
 
-        basis[f'{d_in},{d_out}'] = K_Js # (mi, mf)
+        basis[f'({d_in},{d_out})'] = K_Js # (mi, mf)
 
     return basis
 

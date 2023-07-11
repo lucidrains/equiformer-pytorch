@@ -25,6 +25,7 @@ setup(
     'beartype',
     'einops>=0.6',
     'filelock',
+    'opt-einsum',
     'torch>=1.6',
   ],
   setup_requires=[
