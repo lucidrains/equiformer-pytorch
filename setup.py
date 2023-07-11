@@ -25,7 +25,6 @@ setup(
     'beartype',
     'einops>=0.6',
     'filelock',
-    'numpy',
     'torch>=1.6',
   ],
   setup_requires=[

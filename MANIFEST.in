@@ -1,5 +1,1 @@
 include equiformer_pytorch/data/J_dense.pt
-include equiformer_pytorch/data/J_dense.npy
-
-recursive-include equiformer_pytorch *.cu
-recursive-include equiformer_pytorch *.h
