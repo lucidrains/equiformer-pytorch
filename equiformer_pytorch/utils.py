@@ -7,6 +7,7 @@ import torch
 import contextlib
 from functools import wraps, lru_cache
 from filelock import FileLock
+from equiformer_pytorch.version import __version__
 
 from einops import rearrange
 
@@ -139,6 +140,7 @@ def cache_dir(dirname, maxsize = 128, namespace = None):
     def decorator(func):
         nonlocal namespace
         namespace = default(namespace, func.__name__)
+        namespace = f'{__version__}:{namespace}'
 
         @lru_cache(maxsize = maxsize)
         @wraps(func)

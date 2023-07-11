@@ -411,7 +411,6 @@ class PairwiseTP(nn.Module):
         self.nc_in = nc_in
         self.nc_out = nc_out
 
-        self.num_freq = to_order(min(degree_in, degree_out))
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
@@ -425,8 +424,8 @@ class PairwiseTP(nn.Module):
             nn.Linear(mid_dim, mid_dim),
             nn.SiLU(),
             LayerNorm(mid_dim),
-            nn.Linear(mid_dim, self.num_freq * nc_in * nc_out),
-            Rearrange('... (lo li mf) -> ... lo li 1 mf', li = nc_in, lo = nc_out)
+            nn.Linear(mid_dim, nc_in * nc_out),
+            Rearrange('... (lo li) -> ... lo li 1 1', li = nc_in, lo = nc_out)
         )
 
     def forward(self, feat, basis):
