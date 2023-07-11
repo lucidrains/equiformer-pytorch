@@ -268,6 +268,8 @@ class DTP(nn.Module):
             split_dim_out = split_num_into_groups(dim_out, num_degrees_in)  # returns a tuple of ints representing how many channels come from each input degree
 
             for degree_in, (dim_in, dim_out_from_degree_in) in enumerate(zip(self.fiber_in, split_dim_out)):
+                degree_min = min(degree_out, degree_in)
+
                 self.kernel_unary[f'({degree_in},{degree_out})'] = PairwiseTP(degree_in, dim_in, degree_out, dim_out_from_degree_in, radial_hidden_dim = radial_hidden_dim, edge_dim = edge_dim)
 
         # whether a single token is self-interacting
@@ -311,6 +313,10 @@ class DTP(nn.Module):
 
                 m_in = to_order(degree_in)
                 m_min = min(m_in, m_out)
+
+                degree_min = min(degree_in, degree_out)
+
+                # get source and target (neighbor) representations
 
                 xi, xj = source[degree_in], target[degree_in]
 
@@ -414,6 +420,11 @@ class PairwiseTP(nn.Module):
 
     def forward(self, feat, basis):
         R = self.rp(feat)
+
+        if self.degree_in == 0 or self.degree_out == 0:
+            # if either input or output degrees are 0, clebsch gordan becomes a single constant multiplicative value, subsumed by the learned parameters
+            return R
+
         B = basis[f'{self.degree_in},{self.degree_out}']
         B = rearrange(B, '... o i m -> ... 1 o 1 i m')
         return R * B

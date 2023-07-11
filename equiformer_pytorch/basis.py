@@ -128,6 +128,9 @@ def get_basis(max_degree, device, dtype):
         m_in, m_out, m_min = map(to_order, (d_in, d_out, d_min))
         slice_in, slice_out = map(lambda t: slice_for_centering_y_to_x(t, m_min), (m_in, m_out))
 
+        if d_min == 0:
+            continue
+
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
 
             # Get spherical harmonic projection matrices
@@ -149,6 +152,7 @@ def get_basis(max_degree, device, dtype):
             K_Js.append(K_J)
 
         K_Js = torch.stack(K_Js, dim = -1)
+
         basis[f'{d_in},{d_out}'] = K_Js
 
     return basis
