@@ -70,6 +70,22 @@ def sylvester_submatrix(order_out, order_in, J, a, b, c):
 
     return kron(R_tensor, R_irrep_J_identity) - kron(R_tensor_identity, R_irrep_J_T)  # [(m_out * m_in) * m, (m_out * m_in) * m]
 
+def kron(a, b):
+    """
+    A part of the pylabyk library: numpytorch.py at https://github.com/yulkang/pylabyk
+    Kronecker product of matrices a and b with leading batch dimensions.
+    Batch dimensions are broadcast. The number of them mush
+    :type a: torch.Tensor
+    :type b: torch.Tensor
+    :rtype: torch.Tensor
+    """
+    res = einsum(a, b, '... i j, ... k l -> ... i k j l')
+    return rearrange(res, '... i j k l -> ... (i j) (k l)')
+
+def get_R_tensor(order_out, order_in, a, b, c):
+    angles = torch.stack((a, b, c), dim = -1)
+    return kron(irr_repr(order_out, angles), irr_repr(order_in, angles))
+
 @cache_dir(CACHE_PATH)
 @torch_default_dtype(torch.float64)
 @torch.no_grad()
@@ -94,8 +110,10 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 
     return Q_J.float()  # [m_out * m_in, m]
 
+@cache_dir(CACHE_PATH)
+@torch_default_dtype(torch.float64)
 @torch.no_grad()
-def get_basis(max_degree, device, dtype, reduce_mo = False):
+def get_basis(max_degree, reduce_mo = False):
     """
     Return equivariant weight basis (basis)
     assuming edges are aligned to z-axis
@@ -120,7 +138,7 @@ def get_basis(max_degree, device, dtype, reduce_mo = False):
 
             # Get spherical harmonic projection matrices
 
-            Q_J = basis_transformation_Q_J(J, d_in, d_out).to(device).type(dtype)
+            Q_J = basis_transformation_Q_J(J, d_in, d_out)
 
             # aligning edges (r_ij) with z-axis leads to sparse spherical harmonics (ex. degree 1 [0., 1., 0.]) - thus plucking out only the mo index
             # https://arxiv.org/abs/2206.14331

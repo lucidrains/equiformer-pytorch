@@ -7,11 +7,12 @@ from einops import rearrange, repeat
 import sidechainnet as scn
 from equiformer_pytorch import Equiformer
 
-torch.set_default_dtype(torch.float64)
-
 BATCH_SIZE = 1
 GRADIENT_ACCUMULATE_EVERY = 16
 MAX_SEQ_LEN = 512
+DEFAULT_TYPE = torch.float64
+
+torch.set_default_dtype(DEFAULT_TYPE)
 
 def cycle(loader, len_thres = MAX_SEQ_LEN):
     while True:
@@ -22,14 +23,14 @@ def cycle(loader, len_thres = MAX_SEQ_LEN):
 
 transformer = Equiformer(
     num_tokens = 24,
-    dim = (16, 8),
-    dim_head = (16, 8),
-    heads = (2, 2),
+    dim = (16, 8, 8, 8),
+    dim_head = (16, 8, 8, 8),
+    heads = (4, 2, 2, 2),
     depth = 4,
     attend_self = True,
     reduce_dim_out = True,
-    num_neighbors = 12,
-    num_degrees = 2,
+    num_neighbors = 6,
+    num_degrees = 4,
     linear_out = True
 ).cuda()
 
@@ -53,7 +54,7 @@ for _ in range(10000):
         seqs, coords, masks = batch.seqs, batch.crds, batch.msks
 
         seqs = seqs.cuda().argmax(dim = -1)
-        coords = coords.cuda().type(torch.float64)
+        coords = coords.cuda().type(torch.get_default_dtype())
         masks = masks.cuda().bool()
 
         l = seqs.shape[1]
