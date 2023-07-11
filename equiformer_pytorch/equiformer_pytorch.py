@@ -921,7 +921,7 @@ class Equiformer(nn.Module):
         # basis is now constant
         # pytorch does not have BufferDict yet, just improvise a solution with python property
 
-        self.basis = get_basis(self.num_degrees - 1, reduce_mo = True)
+        self.basis = get_basis(self.num_degrees - 1)
 
     @property
     def basis(self):

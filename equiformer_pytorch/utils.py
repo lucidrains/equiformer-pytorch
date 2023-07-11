@@ -129,7 +129,7 @@ def cache(cache, key_fn):
 
 # cache in directory
 
-def cache_dir(dirname, maxsize=128):
+def cache_dir(dirname, maxsize = 128, namespace = None):
     '''
     Cache a function with a directory
 
@@ -137,8 +137,10 @@ def cache_dir(dirname, maxsize=128):
     :param maxsize: maximum size of the RAM cache (there is no limit for the directory cache)
     '''
     def decorator(func):
+        nonlocal namespace
+        namespace = default(namespace, func.__name__)
 
-        @lru_cache(maxsize=maxsize)
+        @lru_cache(maxsize = maxsize)
         @wraps(func)
         def wrapper(*args, **kwargs):
             if not exists(dirname):
@@ -160,7 +162,7 @@ def cache_dir(dirname, maxsize=128):
                 if key in index:
                     filename = index[key]
                 else:
-                    index[key] = filename = f"{len(index)}.pkl.gz"
+                    index[key] = filename = f"{namespace}:{len(index)}.pkl.gz"
                     with open(indexfile, "wb") as file:
                         pickle.dump(index, file)
 

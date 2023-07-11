@@ -113,12 +113,11 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
 @cache_dir(CACHE_PATH)
 @torch_default_dtype(torch.float64)
 @torch.no_grad()
-def get_basis(max_degree, reduce_mo = False):
+def get_basis(max_degree):
     """
     Return equivariant weight basis (basis)
     assuming edges are aligned to z-axis
     """
-
     basis = dict()
 
     # Equivariant basis (dict['<d_in><d_out>'])
@@ -150,8 +149,7 @@ def get_basis(max_degree, reduce_mo = False):
             K_J = rearrange(K_J, '... (o i) -> ... o i', o = m_out)
             K_J = K_J[..., slice_out, slice_in]
 
-            if reduce_mo:
-                K_J = reduce(K_J, 'o i -> i', 'sum') # the matrix is a sparse diagonal, but flipped depending on whether J is even or odd
+            K_J = reduce(K_J, 'o i -> i', 'sum') # the matrix is a sparse diagonal, but flipped depending on whether J is even or odd
 
             K_Js.append(K_J)
 
