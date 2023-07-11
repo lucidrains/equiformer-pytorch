@@ -3,7 +3,10 @@ import sys
 import time
 import pickle
 import gzip
+
 import torch
+import torch.nn.functional as F
+
 import contextlib
 from functools import wraps, lru_cache
 from filelock import FileLock
@@ -16,11 +19,17 @@ from einops import rearrange
 def exists(val):
     return val is not None
 
+def identity(t):
+    return t
+
 def default(val, d):
     return val if exists(val) else d
 
 def to_order(degree):
     return 2 * degree + 1
+
+def l2norm(t):
+    return F.normalize(t, dim = -1)
 
 def pad_for_centering_y_to_x(x, y):
     assert y <= x

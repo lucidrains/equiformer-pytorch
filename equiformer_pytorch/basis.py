@@ -8,9 +8,8 @@ import torch
 from einops import rearrange, repeat, reduce, einsum
 
 from equiformer_pytorch.irr_repr import (
-    rot_x_to_y_direction,
-    rot_to_euler_angles,
-    irr_repr
+    irr_repr,
+    rot_to_euler_angles
 )
 
 from equiformer_pytorch.utils import (
@@ -19,6 +18,8 @@ from equiformer_pytorch.utils import (
     exists,
     default,
     to_order,
+    identity,
+    l2norm,
     slice_for_centering_y_to_x
 )
 
@@ -38,9 +39,6 @@ RANDOM_ANGLES = torch.tensor([
 ], dtype = torch.float64)
 
 # functions
-
-def identity(t):
-    return t
 
 def get_matrix_kernel(A, eps = 1e-10):
     '''
@@ -158,6 +156,31 @@ def get_basis(max_degree):
         basis[f'{d_in},{d_out}'] = K_Js # (mi, mf)
 
     return basis
+
+# functions for rotating r_ij to z-axis
+
+def rot_x_to_y_direction(x, y):
+    '''
+    Rotates a vector x to the same direction as vector y
+    Taken from https://math.stackexchange.com/a/2672702
+    This formulation, although not the shortest path, has the benefit of rotation matrix being symmetric; rotating back to x upon two rotations
+    '''
+    n, dtype, device = x.shape[-1], x.dtype, x.device
+
+    I = torch.eye(n, device = device, dtype = dtype)
+
+    if torch.allclose(x, y, atol = 1e-6):
+        return I
+
+    x, y = x.double(), y.double()
+
+    x, y = map(l2norm, (x, y))
+
+    xy = rearrange(x + y, '... n -> ... n 1')
+    xy_t = rearrange(xy, '... n 1 -> ... 1 n')
+
+    R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
+    return R.type(dtype)
 
 @torch.no_grad()
 def get_D_to_from_z_axis(r_ij, max_degree):

@@ -11,7 +11,14 @@ from torch import sin, cos, atan2, acos
 
 from einops import rearrange, pack, unpack
 
-from equiformer_pytorch.utils import exists, default, cast_torch_tensor, to_order
+from equiformer_pytorch.utils import (
+    exists,
+    default,
+    cast_torch_tensor,
+    to_order,
+    identity,
+    l2norm
+)
 
 DATA_PATH = path = Path(os.path.dirname(__file__)) / 'data'
 
@@ -22,15 +29,6 @@ except:
     path = DATA_PATH / 'J_dense.npy'
     Jd_np = np.load(str(path), allow_pickle = True)
     Jd = list(map(torch.from_numpy, Jd_np))
-
-def exists(val):
-    return val is not None
-
-def identity(t):
-    return t
-
-def l2norm(t):
-    return F.normalize(t, p = 2, dim = -1)
 
 def pack_one(t, pattern):
     return pack([t], pattern)
@@ -136,26 +134,3 @@ def rot_to_euler_angles(R):
     R = rot(a, b, torch.zeros_like(a)).transpose(-1, -2) @ R
     c = atan2(R[..., 0, 2], R[..., 0, 0])
     return torch.stack((a, b, c), dim = -1)
-
-def rot_x_to_y_direction(x, y):
-    '''
-    Rotates a vector x to the same direction as vector y
-    Taken from https://math.stackexchange.com/a/2672702
-    This formulation, although not the shortest path, has the benefit of rotation matrix being symmetric; rotating back to x upon two rotations
-    '''
-    n, dtype, device = x.shape[-1], x.dtype, x.device
-
-    I = torch.eye(n, device = device, dtype = dtype)
-
-    if torch.allclose(x, y, atol = 1e-6):
-        return I
-
-    x, y = x.double(), y.double()
-
-    x, y = map(l2norm, (x, y))
-
-    xy = rearrange(x + y, '... n -> ... n 1')
-    xy_t = rearrange(xy, '... n 1 -> ... 1 n')
-
-    R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
-    return R.type(dtype)
