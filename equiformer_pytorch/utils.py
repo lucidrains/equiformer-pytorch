@@ -1,5 +1,5 @@
-import os
-import sys
+from pathlib import Path
+
 import time
 import pickle
 import gzip
@@ -139,7 +139,7 @@ def cache(cache, key_fn):
 
 # cache in directory
 
-def cache_dir(dirname, maxsize = 128, namespace = None):
+def cache_dir(dirname, maxsize=128):
     '''
     Cache a function with a directory
 
@@ -147,24 +147,22 @@ def cache_dir(dirname, maxsize = 128, namespace = None):
     :param maxsize: maximum size of the RAM cache (there is no limit for the directory cache)
     '''
     def decorator(func):
-        nonlocal namespace
-        namespace = default(namespace, func.__name__)
-        namespace = f'{__version__}:{namespace}'
 
-        @lru_cache(maxsize = maxsize)
+        @lru_cache(maxsize=maxsize)
         @wraps(func)
         def wrapper(*args, **kwargs):
             if not exists(dirname):
                 return func(*args, **kwargs)
 
-            os.makedirs(dirname, exist_ok = True)
+            dirpath = Path(dirname)
+            dirpath.mkdir(parents = True, exist_ok = True)
 
-            indexfile = os.path.join(dirname, "index.pkl")
-            lock = FileLock(os.path.join(dirname, "mutex"))
+            indexfile = dirpath / 'index.pkl'
+            lock = FileLock(str(dirpath / 'mutex'))
 
             with lock:
                 index = {}
-                if os.path.exists(indexfile):
+                if indexfile.exists():
                     with open(indexfile, "rb") as file:
                         index = pickle.load(file)
 
@@ -173,13 +171,13 @@ def cache_dir(dirname, maxsize = 128, namespace = None):
                 if key in index:
                     filename = index[key]
                 else:
-                    index[key] = filename = f"{namespace}:{len(index)}.pkl.gz"
+                    index[key] = filename = f"{len(index)}.pkl.gz"
                     with open(indexfile, "wb") as file:
                         pickle.dump(index, file)
 
-            filepath = os.path.join(dirname, filename)
+            filepath = dirpath / filename
 
-            if os.path.exists(filepath):
+            if filepath.exists():
                 with lock:
                     with gzip.open(filepath, "rb") as file:
                         result = pickle.load(file)
@@ -198,3 +196,4 @@ def cache_dir(dirname, maxsize = 128, namespace = None):
             return result
         return wrapper
     return decorator
+

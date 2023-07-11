@@ -351,6 +351,8 @@ class DTP(nn.Module):
                 if degree_in == 0 or degree_out == 0:
                     output_chunk = einsum(kernel, x, '... lo li mi mf, ... li mi -> ... lo mi')
                 else:
+                    y = x.clone()
+
                     x = repeat(x, '... mi -> ... mi mf r', mf = (kernel.shape[-1] + 1) // 2, r = 2) # mf + 1, so that mf can be divided in 2
                     x, x_to_flip = x.unbind(dim = -1)
 

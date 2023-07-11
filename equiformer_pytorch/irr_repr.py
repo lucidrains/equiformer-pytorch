@@ -1,7 +1,5 @@
-import os
-from math import pi
 from pathlib import Path
-from functools import wraps, partial
+from functools import partial
 
 import torch
 import torch.nn.functional as F
@@ -18,7 +16,7 @@ from equiformer_pytorch.utils import (
     l2norm
 )
 
-DATA_PATH = path = Path(os.path.dirname(__file__)) / 'data'
+DATA_PATH = Path(__file__).parents[0] / 'data'
 path = DATA_PATH / 'J_dense.pt'
 Jd = torch.load(str(path))
 
