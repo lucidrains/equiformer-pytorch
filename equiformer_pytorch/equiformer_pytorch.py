@@ -7,8 +7,8 @@ from beartype.typing import Optional, Union, Tuple
 from beartype import beartype
 
 import torch
+from torch import nn
 import torch.nn.functional as F
-from torch import nn, einsum
 
 from equiformer_pytorch.basis import get_basis, get_D_to_from_z_axis
 
@@ -25,7 +25,7 @@ from equiformer_pytorch.utils import (
     pad_for_centering_y_to_x
 )
 
-from einops import rearrange, repeat, pack, unpack
+from einops import rearrange, repeat, einsum, pack, unpack
 from einops.layers.torch import Rearrange
 
 # constants
@@ -162,7 +162,7 @@ class Linear(nn.Module):
         out = {}
 
         for degree, weight in zip(self.degrees, self.weights):
-            out[degree] = einsum('... d m, d e -> ... e m', x[degree], weight)
+            out[degree] = einsum(x[degree], weight, '... d m, d e -> ... e m')
 
         return out
 
@@ -330,7 +330,7 @@ class DTP(nn.Module):
 
                 if degree_in > 0:
                     Di = D[degree_in]
-                    x = einsum('... y n, ... i y -> ... i n', Di, x)
+                    x = einsum(Di, x, '... mi1 mi2, ... li mi1 -> ... li mi2')
 
                 # remove some 0s if degree_in != degree_out
 
@@ -346,9 +346,20 @@ class DTP(nn.Module):
 
                 kernel = kernel_fn(edge_features, basis = basis)
 
-                # todo - make efficient as (m, n) is sparse, bringing us to the so(2) connection
+                # mo depends only on mi (or other way around), removing yet another dimension
 
-                output_chunk = einsum('... o m i n f, ... i n -> ... o m', kernel, x)
+                if degree_in == 0 or degree_out == 0:
+                    output_chunk = einsum(kernel, x, '... lo li mi mf, ... li mi -> ... lo mi')
+                else:
+                    x = repeat(x, '... mi -> ... mi mf r', mf = (kernel.shape[-1] + 1) // 2, r = 2) # mf + 1, so that mf can be divided in 2
+                    x, x_to_flip = x.unbind(dim = -1)
+
+                    x_flipped = torch.flip(x_to_flip, dims = (-2,)) # flip on the mi axis, as the basis alternates between diagonal and flipped diagonal across mf
+                    x = torch.stack((x, x_flipped), dim = -1)
+                    x = rearrange(x, '... mf r -> ... (mf r)', r = 2)
+                    x = x[..., :-1]
+
+                    output_chunk = einsum(kernel, x, '... lo li mi mf, ... li mi mf -> ... lo mi')
 
                 # in the case that degree_out < degree_in
 
@@ -360,7 +371,7 @@ class DTP(nn.Module):
 
             if degree_out > 0:
                 Do = D[degree_out]
-                output = einsum('... o m, ... x m -> ... o x', output, Do)
+                output = einsum(output, Do, '... lo mo1, ... mo2 mo1 -> ... lo mo2')
 
             # pool or not along j (neighbors) dimension
 
@@ -415,7 +426,7 @@ class PairwiseTP(nn.Module):
             nn.SiLU(),
             LayerNorm(mid_dim),
             nn.Linear(mid_dim, self.num_freq * nc_in * nc_out),
-            Rearrange('... (o i f) -> ... o 1 i 1 f', i = nc_in, o = nc_out)
+            Rearrange('... (lo li mf) -> ... lo li 1 mf', li = nc_in, lo = nc_out)
         )
 
     def forward(self, feat, basis):
@@ -425,8 +436,7 @@ class PairwiseTP(nn.Module):
             # if either input or output degrees are 0, clebsch gordan becomes a single constant multiplicative value, subsumed by the learned parameters
             return R
 
-        B = basis[f'{self.degree_in},{self.degree_out}']
-        B = rearrange(B, '... o i m -> ... 1 o 1 i m')
+        B = basis[f'{self.degree_in},{self.degree_out}'] # (mi, mf)
         return R * B
 
 # feed forwards
@@ -504,8 +514,8 @@ class LinearAttention(nn.Module):
         k = k.softmax(dim = -2)
         q = q.softmax(dim = -1)
 
-        kv = einsum('b h n d, b h n e -> b h d e', k, v)
-        out = einsum('b h d e, b h n d -> b h n e', kv, q)
+        kv = einsum(k, v, 'b h n d, b h n e -> b h d e')
+        out = einsum(kv, q, 'b h d e, b h n d -> b h n e')
         out = rearrange(out, 'b h n d -> b n (h d)')
 
         if has_degree_m_dim:
@@ -630,7 +640,7 @@ class L2DistAttention(nn.Module):
                 sim = sim.masked_fill(~padded_neighbor_mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
-            out = einsum(f'b h i j, {kv_einsum_eq} -> b h i d m', attn, v)
+            out = einsum(attn, v, f'b h i j, {kv_einsum_eq} -> b h i d m')
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         if self.has_linear_attn:
@@ -774,7 +784,7 @@ class MLPAttention(nn.Module):
             if not one_headed_kv:
                 value = rearrange(value, 'b i j (h d) m -> b i j h d m', h = h)
 
-            out = einsum(f'b i j h, {value_einsum_eq} -> b i h d m', attn, value)
+            out = einsum(attn, value, f'b i j h, {value_einsum_eq} -> b i h d m')
             out = rearrange(out, 'b i h d m -> b i (h d) m')
             outputs[degree] = out
 
@@ -909,8 +919,28 @@ class Equiformer(nn.Module):
         self.ff_out = proj_out_klass(self.dim, (1,) * self.num_degrees) if reduce_dim_out else None
 
         # basis is now constant
+        # pytorch does not have BufferDict yet, just improvise a solution with python property
 
-        self.basis = get_basis(self.num_degrees - 1, device = self.device, dtype = torch.get_default_dtype())
+        self.basis = get_basis(
+            self.num_degrees - 1,
+            device = self.device,
+            dtype = torch.get_default_dtype(),
+            reduce_mo = True
+        )
+
+    @property
+    def basis(self):
+        out = dict()
+        for k in self.basis_keys:
+            out[k] = getattr(self, f'basis:{k}')
+        return out
+
+    @basis.setter
+    def basis(self, basis):
+        self.basis_keys = basis.keys()
+
+        for k, v in basis.items():
+            self.register_buffer(f'basis:{k}', v)
 
     @property
     def device(self):

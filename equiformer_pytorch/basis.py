@@ -5,7 +5,7 @@ from contextlib import contextmanager, nullcontext
 from collections import namedtuple
 
 import torch
-from einops import rearrange, repeat, einsum
+from einops import rearrange, repeat, reduce, einsum
 
 from equiformer_pytorch.irr_repr import (
     rot_x_to_y_direction,
@@ -56,23 +56,6 @@ def get_matrix_kernel(A, eps = 1e-10):
     kernel = v.t()[s < eps]
     return kernel
 
-def kron(a, b):
-    """
-    A part of the pylabyk library: numpytorch.py at https://github.com/yulkang/pylabyk
-
-    Kronecker product of matrices a and b with leading batch dimensions.
-    Batch dimensions are broadcast. The number of them mush
-    :type a: torch.Tensor
-    :type b: torch.Tensor
-    :rtype: torch.Tensor
-    """
-    res = einsum(a, b, '... i j, ... k l -> ... i k j l')
-    return rearrange(res, '... i j k l -> ... (i j) (k l)')
-
-def get_R_tensor(order_out, order_in, a, b, c):
-    angles = torch.stack((a, b, c), dim = -1)
-    return kron(irr_repr(order_out, angles), irr_repr(order_in, angles))
-
 def sylvester_submatrix(order_out, order_in, J, a, b, c):
     ''' generate Kronecker product matrix for solving the Sylvester equation in subspace J '''
     angles = torch.stack((a, b, c), dim = -1)
@@ -112,10 +95,12 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     return Q_J.float()  # [m_out * m_in, m]
 
 @torch.no_grad()
-def get_basis(max_degree, device, dtype):
-    """Return equivariant weight basis (basis)
+def get_basis(max_degree, device, dtype, reduce_mo = False):
+    """
+    Return equivariant weight basis (basis)
     assuming edges are aligned to z-axis
     """
+
     basis = dict()
 
     # Equivariant basis (dict['<d_in><d_out>'])
@@ -145,15 +130,16 @@ def get_basis(max_degree, device, dtype):
             K_J = Q_J[..., mo_index]
 
             K_J = rearrange(K_J, '... (o i) -> ... o i', o = m_out)
-
             K_J = K_J[..., slice_out, slice_in]
-            assert K_J.shape[-1] == K_J.shape[-2]
+
+            if reduce_mo:
+                K_J = reduce(K_J, 'o i -> i', 'sum') # the matrix is a sparse diagonal, but flipped depending on whether J is even or odd
 
             K_Js.append(K_J)
 
         K_Js = torch.stack(K_Js, dim = -1)
 
-        basis[f'{d_in},{d_out}'] = K_Js
+        basis[f'{d_in},{d_out}'] = K_Js # (mi, mf)
 
     return basis
 

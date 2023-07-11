@@ -95,8 +95,9 @@ $ python denoise.py
     - [x] prepare get_basis to return D for rotating representations to (0, 1, 0) to greatly simplify spherical harmonics
     - [x] add tests for batch rotating vectors to align with another - handle edge cases (0, 0, 0)?
     - [x] redo get_basis to only calculate spherical harmonics Y for (0, 1, 0) and cache
+    - [x] do the further optimization to remove clebsch gordan (since m_i only depends on m_o), as noted in eSCN paper
+    - [ ] figure out the whole linear bijection argument in appendix of eSCN and why parameterized mf can be removed, then remove it once understood.
     - [ ] validate order of magnitude speed up and reach for higher degrees
-    - [ ] do the further optimization to remove clebsch gordan (since m_i only depends on m_o), as noted in eSCN paper
     - [ ] refactor into full so3 -> so2 linear layer, as proposed in eSCN paper
     - [ ] add equiformer v2, and start looking into equivariant protein backbone diffusion again
 
