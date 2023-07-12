@@ -45,7 +45,7 @@ out.type0 # invariant type 0    - (1, 128)
 out.type1 # equivariant type 1  - (1, 128, 3)
 ```
 
-This repository also includes a way to decouple memory usage from depth using <a href="https://arxiv.org/abs/1707.04585">reversible networks</a>. In other words, memory usage is completely decoupled from depth
+This repository also includes a way to decouple memory usage from depth using <a href="https://arxiv.org/abs/1707.04585">reversible networks</a>. In other words, if you increase depth, the memory cost will stay constant at the usage of one equiformer transformer block (attention and feedforward).
 
 ```python
 import torch
