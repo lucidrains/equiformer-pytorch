@@ -45,6 +45,31 @@ out.type0 # invariant type 0    - (1, 128)
 out.type1 # equivariant type 1  - (1, 128, 3)
 ```
 
+This repository also includes a way to decouple memory usage from depth using <a href="https://arxiv.org/abs/1707.04585">reversible networks</a>. In other words, memory usage is completely decoupled from depth
+
+```python
+import torch
+from equiformer_pytorch import Equiformer
+
+model = Equiformer(
+    num_tokens = 24,
+    dim = (4, 4, 2),
+    dim_head = (4, 4, 4),
+    heads = (2, 2, 2),
+    num_degrees = 3,
+    depth = 48,          # depth of 48 - just to show that it runs - in reality, seems to be quite unstable at higher depths, so architecture stil needs more work
+    reversible = True,   # just set this to True to use https://arxiv.org/abs/1707.04585
+).cuda()
+
+feats = torch.randint(0, 24, (1, 128)).cuda()
+coors = torch.randn(1, 128, 3).cuda()
+mask  = torch.ones(1, 128).bool().cuda()
+
+out = model(feats, coors, mask)
+
+out.type0.sum().backward()
+```
+
 ## Appreciation
 
 - <a href="https://stability.ai/">StabilityAI</a> for the generous sponsorship, as well as my other sponsors out there
@@ -165,5 +190,14 @@ $ python denoise.py
   journal   = {ArXiv},
   year      = {2023},
   volume    = {abs/2302.03655}
+}
+```
+
+```bibtex
+@inproceedings{Gomez2017TheRR,
+    title   = {The Reversible Residual Network: Backpropagation Without Storing Activations},
+    author  = {Aidan N. Gomez and Mengye Ren and Raquel Urtasun and Roger Baker Grosse},
+    booktitle = {NIPS},
+    year    = {2017}
 }
 ```

@@ -12,7 +12,15 @@ import torch.nn.functional as F
 
 from opt_einsum import contract as opt_einsum
 
-from equiformer_pytorch.basis import get_basis, get_D_to_from_z_axis
+from equiformer_pytorch.basis import (
+    get_basis,
+    get_D_to_from_z_axis
+)
+
+from equiformer_pytorch.reversible import (
+    SequentialSequence,
+    ReversibleSequence
+)
 
 from equiformer_pytorch.utils import (
     exists,
@@ -89,16 +97,16 @@ def get_tensor_device_and_dtype(features):
 
 def residual_fn(x, residual):
     out = {}
+
     for degree, tensor in x.items():
         out[degree] = tensor
 
         if degree not in residual:
             continue
 
-        # saves mem with in-place if no grads involved
-        if not out[degree].requires_grad and not residual[degree].requires_grad:
+        if not any(t.requires_grad for t in (out[degree], residual[degree])):
             out[degree] += residual[degree]
-        else: # general, safe case
+        else:
             out[degree] = out[degree] + residual[degree]
 
     return out
@@ -824,6 +832,7 @@ class Equiformer(nn.Module):
         single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
         ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
         l2_dist_attention = True,          # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
+        reversible = False,                # turns on reversible networks, to scale depth without incurring depth times memory cost
         **kwargs
     ):
         super().__init__()
@@ -888,12 +897,12 @@ class Equiformer(nn.Module):
 
         # trunk
 
-        self.layers = nn.ModuleList([])
+        self.layers = []
 
         attention_klass = L2DistAttention if l2_dist_attention else MLPAttention
 
         for ind in range(depth):
-            self.layers.append(nn.ModuleList([
+            self.layers.append((
                 attention_klass(
                     self.dim,
                     heads = heads,
@@ -905,7 +914,11 @@ class Equiformer(nn.Module):
                     **kwargs
                 ),
                 FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
-            ]))
+            ))
+
+        SequenceKlass = ReversibleSequence if reversible else SequentialSequence
+
+        self.layers = SequenceKlass(self.layers)
 
         # out
 
@@ -1074,9 +1087,7 @@ class Equiformer(nn.Module):
             mask = _mask
         )
 
-        for attn, ff in self.layers:
-            x = residual_fn(attn(x, **attn_kwargs), x)
-            x = residual_fn(ff(x), x)
+        x = self.layers(x, **attn_kwargs)
 
         # norm
 
