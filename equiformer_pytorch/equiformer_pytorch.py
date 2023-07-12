@@ -168,6 +168,10 @@ class Linear(nn.Module):
             self.weights.append(nn.Parameter(torch.randn(dim_in, dim_out) / sqrt(dim_in)))
             self.degrees.append(degree)
 
+    def init_zero_(self):
+        for weight in self.weights:
+            weight.data.zero_()
+
     def forward(self, x):
         out = {}
 
@@ -453,7 +457,8 @@ class FeedForward(nn.Module):
         fiber: Tuple[int, ...],
         fiber_out: Optional[Tuple[int, ...]] = None,
         mult = 4,
-        include_htype_norms = True
+        include_htype_norms = True,
+        init_out_zero = True
     ):
         super().__init__()
         self.fiber = fiber
@@ -473,6 +478,9 @@ class FeedForward(nn.Module):
         self.project_in  = Linear(project_in_fiber, project_in_fiber_hidden)
         self.gate        = Gate(project_in_fiber_hidden)
         self.project_out = Linear(fiber_hidden, fiber_out)
+
+        if init_out_zero:
+            self.project_out.init_zero_()
 
     def forward(self, features):
         outputs = self.prenorm(features)
@@ -542,7 +550,8 @@ class L2DistAttention(nn.Module):
         single_headed_kv = False,
         radial_hidden_dim = 64,
         splits = 4,
-        num_linear_attn_heads = 0
+        num_linear_attn_heads = 0,
+        init_out_zero = True
     ):
         super().__init__()
         num_degrees = len(fiber)
@@ -579,6 +588,9 @@ class L2DistAttention(nn.Module):
             hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
 
         self.to_out = Linear(hidden_fiber, fiber)
+
+        if init_out_zero:
+            self.to_out.init_zero_()
 
     @beartype
     def forward(
@@ -669,6 +681,7 @@ class MLPAttention(nn.Module):
         attn_hidden_dim_mult = 4,
         radial_hidden_dim = 16,
         num_linear_attn_heads = 0,
+        init_out_zero = True,
         **kwargs
     ):
         super().__init__()
@@ -737,6 +750,9 @@ class MLPAttention(nn.Module):
         # combining heads and projection out
 
         self.to_out = Linear(hidden_fiber, fiber)
+
+        if init_out_zero:
+            self.to_out.init_zero_()
 
     @beartype
     def forward(

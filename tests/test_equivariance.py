@@ -12,7 +12,8 @@ def test_transformer(dim):
     model = Equiformer(
         dim = dim,
         depth = 2,
-        num_degrees = 3
+        num_degrees = 3,
+        init_out_zero = False
     )
 
     feats = torch.randn(1, 32, dim)
@@ -39,7 +40,8 @@ def test_equivariance(
         l2_dist_attention = l2_dist_attention,
         reversible = reversible,
         num_degrees = 3,
-        reduce_dim_out = True
+        reduce_dim_out = True,
+        init_out_zero = False
     )
 
     feat_dim = dim if not isinstance(dim, tuple) else dim[0]
