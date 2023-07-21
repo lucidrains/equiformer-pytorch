@@ -177,7 +177,7 @@ def rot_x_to_y_direction(x, y):
     xy = rearrange(x + y, '... n -> ... n 1')
     xy_t = rearrange(xy, '... n 1 -> ... 1 n')
 
-    R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
+    R = 2 * (xy @ xy_t) / (xy_t @ xy + 1e-6) - I
     return R.type(dtype)
 
 @torch.no_grad()
