@@ -987,7 +987,7 @@ class Equiformer(nn.Module):
 
         feats = self.embedding_grad_frac * feats + (1 - self.embedding_grad_frac) * feats.detach()
 
-        assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
+        assert not (not self.has_edges and exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if torch.is_tensor(feats):
             feats = rearrange(feats, '... -> ... 1')
@@ -1020,7 +1020,9 @@ class Equiformer(nn.Module):
 
         if exists(edges):
             if exists(self.edge_emb):
+                edges = edges.reshape((b, n * n))
                 edges = self.edge_emb(edges)
+                edges = edges.reshape((b, n, n, -1))
 
             edges = edges.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, -1)
 
