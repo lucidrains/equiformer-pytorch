@@ -157,7 +157,7 @@ def get_basis(max_degree):
 
 # functions for rotating r_ij to z-axis
 
-def rot_x_to_y_direction(x, y):
+def rot_x_to_y_direction(x, y, eps = 1e-6):
     '''
     Rotates a vector x to the same direction as vector y
     Taken from https://math.stackexchange.com/a/2672702
@@ -177,7 +177,7 @@ def rot_x_to_y_direction(x, y):
     xy = rearrange(x + y, '... n -> ... n 1')
     xy_t = rearrange(xy, '... n 1 -> ... 1 n')
 
-    R = 2 * (xy @ xy_t) / (xy_t @ xy) - I
+    R = 2 * (xy @ xy_t) / (xy_t @ xy).clamp(min = eps) - I
     return R.type(dtype)
 
 @torch.no_grad()
