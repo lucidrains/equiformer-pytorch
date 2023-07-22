@@ -113,7 +113,7 @@ $ python denoise.py
     - [x] do the further optimization to remove clebsch gordan (since m_i only depends on m_o), as noted in eSCN paper
     - [x] validate one can train at higher degrees
     - [x] figure out the whole linear bijection argument in appendix of eSCN and why parameterized lf can be removed
-    - [ ] figure out why training NaNs with float32
+    - [x] figure out why training NaNs with float32
     - [ ] refactor into full so3 -> so2 linear layer, as proposed in eSCN paper
     - [ ] add equiformer v2, and start looking into equivariant protein backbone diffusion again
 
