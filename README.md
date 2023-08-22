@@ -70,6 +70,67 @@ out = model(feats, coors, mask)
 out.type0.sum().backward()
 ```
 
+## Edges
+
+with edges, ex. atomic bonds
+
+```python
+import torch
+from equiformer_pytorch import Equiformer
+
+model = Equiformer(
+    num_tokens = 28,
+    dim = 64,
+    num_edge_tokens = 4,       # number of edge type, say 4 bond types
+    edge_dim = 16,             # dimension of edge embedding
+    depth = 2,
+    input_degrees = 1,
+    num_degrees = 3
+)
+
+atoms = torch.randint(0, 28, (2, 32))
+bonds = torch.randint(0, 4, (2, 32, 32))
+coors = torch.randn(2, 32, 3)
+mask  = torch.ones(2, 32).bool()
+
+out = model(atoms, coors, mask, edges = bonds)
+out.type0 # (2, 32)
+out.type1 # (2, 32, 3)
+```
+
+with adjacency matrix
+
+```python
+import torch
+from equiformer_pytorch import Equiformer
+
+model = Equiformer(
+    dim = 32,
+    heads = 8,
+    depth = 1,
+    dim_head = 64,
+    num_degrees = 2,
+    valid_radius = 10,
+    reversible = True,
+    attend_sparse_neighbors = True,  # this must be set to true, in which case it will assert that you pass in the adjacency matrix
+    num_neighbors = 0,               # if you set this to 0, it will only consider the connected neighbors as defined by the adjacency matrix. but if you set a value greater than 0, it will continue to fetch the closest points up to this many, excluding the ones already specified by the adjacency matrix
+    num_adj_degrees_embed = 2,       # this will derive the second degree connections and embed it correctly
+    max_sparse_neighbors = 8         # you can cap the number of neighbors, sampled from within your sparse set of neighbors as defined by the adjacency matrix, if specified
+)
+
+feats = torch.randn(1, 128, 32)
+coors = torch.randn(1, 128, 3)
+mask  = torch.ones(1, 128).bool()
+
+# placeholder adjacency matrix
+# naively assuming the sequence is one long chain (128, 128)
+
+i = torch.arange(128)
+adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
+
+out = model(feats, coors, mask, adj_mat = adj_mat) # (1, 128, 512)
+```
+
 ## Appreciation
 
 - <a href="https://stability.ai/">StabilityAI</a> for the generous sponsorship, as well as my other sponsors out there

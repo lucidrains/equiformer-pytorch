@@ -845,10 +845,14 @@ class Equiformer(nn.Module):
         splits = 4,
         linear_out = True,
         embedding_grad_frac = 0.5,
-        single_headed_kv = False,          # whether to do single headed key/values for dot product attention, to save on memory and compute
-        ff_include_htype_norms = False,    # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
-        l2_dist_attention = True,          # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
-        reversible = False,                # turns on reversible networks, to scale depth without incurring depth times memory cost
+        single_headed_kv = False,           # whether to do single headed key/values for dot product attention, to save on memory and compute
+        ff_include_htype_norms = False,     # whether for type0 projection to also involve norms of all higher types, in feedforward first projection. this allows for all higher types to be gated by other type norms
+        l2_dist_attention = True,           # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
+        reversible = False,                 # turns on reversible networks, to scale depth without incurring depth times memory cost
+        attend_sparse_neighbors = False,    # ability to accept an adjacency matrix
+        num_adj_degrees_embed = None,
+        adj_dim = 0,
+        max_sparse_neighbors = float('inf'),
         **kwargs
     ):
         super().__init__()
@@ -896,6 +900,20 @@ class Equiformer(nn.Module):
 
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
+
+        # sparse neighbors, derived from adjacency matrix or edges being passed in
+
+        self.attend_sparse_neighbors = attend_sparse_neighbors
+        self.max_sparse_neighbors = max_sparse_neighbors
+
+        # adjacent neighbor derivation and embed
+
+        assert not exists(num_adj_degrees_embed) or num_adj_degrees_embed >= 1, 'number of adjacent degrees to embed must be 1 or greater'
+
+        self.num_adj_degrees_embed = num_adj_degrees_embed
+        self.adj_emb = nn.Embedding(num_adj_degrees_embed + 1, adj_dim) if exists(num_adj_degrees_embed) and adj_dim > 0 else None
+
+        edge_dim = (edge_dim if self.has_edges else 0) + (adj_dim if exists(self.adj_emb) else 0)
 
         # neighbors hyperparameters
 
@@ -972,6 +990,7 @@ class Equiformer(nn.Module):
         feats,
         coors,
         mask = None,
+        adj_mat = None,
         edges = None,
         return_pooled = False,
         neighbor_mask = None,
@@ -998,13 +1017,56 @@ class Equiformer(nn.Module):
         assert d == self.type0_feat_dim, f'feature dimension {d} must be equal to dimension given at init {self.type0_feat_dim}'
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
-        num_degrees, neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.valid_radius
+        num_degrees, neighbors, max_sparse_neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.max_sparse_neighbors, self.valid_radius
+
+        assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
 
         # cannot have a node attend to itself
 
         exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> 1 i j')
         remove_self = lambda t: t.masked_select(exclude_self_mask).reshape(b, n, n - 1)
         get_max_value = lambda t: torch.finfo(t.dtype).max
+
+        # create N-degrees adjacent matrix from 1st degree connections
+
+        if exists(adj_mat) and adj_mat.ndim == 2:
+            adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
+
+        if exists(self.num_adj_degrees_embed):
+            adj_indices = adj_mat.long()
+
+            for ind in range(self.num_adj_degrees_embed - 1):
+                degree = ind + 2
+
+                next_degree_adj_mat = (adj_mat.float() @ adj_mat.float()) > 0
+                next_degree_mask = (next_degree_adj_mat.float() - adj_mat.float()).bool()
+                adj_indices = adj_indices.masked_fill(next_degree_mask, degree)
+                adj_mat = next_degree_adj_mat.clone()
+
+            adj_indices = adj_indices.masked_select(exclude_self_mask)
+            adj_indices = rearrange(adj_indices, '(b i j) -> b i j', b = b, i = n, j = n - 1)
+
+        # calculate sparsely connected neighbors
+
+        sparse_neighbor_mask = None
+        num_sparse_neighbors = 0
+
+        if self.attend_sparse_neighbors:
+            assert exists(adj_mat), 'adjacency matrix must be passed in (keyword argument adj_mat)'
+            adj_mat = remove_self(adj_mat)
+
+            adj_mat_values = adj_mat.float()
+            adj_mat_max_neighbors = adj_mat_values.sum(dim = -1).max().item()
+
+            if max_sparse_neighbors < adj_mat_max_neighbors:
+                eps = 1e-2
+                noise = torch.empty_like(adj_mat_values).uniform_(-eps, eps)
+                adj_mat_values += noise
+
+            num_sparse_neighbors = int(min(max_sparse_neighbors, adj_mat_max_neighbors))
+            values, indices = adj_mat_values.topk(num_sparse_neighbors, dim = -1)
+            sparse_neighbor_mask = torch.zeros_like(adj_mat_values).scatter_(-1, indices, values)
+            sparse_neighbor_mask = sparse_neighbor_mask > 0.5
 
         # exclude edge of token to itself
 
@@ -1050,8 +1112,8 @@ class Equiformer(nn.Module):
         # get neighbors and neighbor mask, excluding self
 
         neighbors = int(min(neighbors, n - 1))
-        total_neighbors = neighbors
 
+        total_neighbors = int(neighbors + num_sparse_neighbors)
         assert total_neighbors > 0, 'you must be fetching at least 1 neighbor'
 
         total_neighbors = int(min(total_neighbors, n - 1)) # make sure total neighbors does not exceed the length of the sequence itself
