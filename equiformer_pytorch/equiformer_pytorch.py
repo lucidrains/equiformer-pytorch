@@ -969,8 +969,8 @@ class Equiformer(nn.Module):
 
     def forward(
         self,
-        feats,
-        coors,
+        feats: Union[torch.Tensor, dict[int, torch.Tensor]],
+        coors: torch.Tensor,
         mask = None,
         edges = None,
         return_pooled = False,
@@ -978,20 +978,22 @@ class Equiformer(nn.Module):
     ):
         _mask = mask
 
-        if exists(self.token_emb):
-            feats = self.token_emb(feats)
-
-        if exists(self.pos_emb):
-            assert feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
-            feats = feats + self.pos_emb(torch.arange(feats.shape[1], device = feats.device))
-
-        feats = self.embedding_grad_frac * feats + (1 - self.embedding_grad_frac) * feats.detach()
-
-        assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
-
         if torch.is_tensor(feats):
             feats = rearrange(feats, '... -> ... 1')
             feats = {0: feats}
+
+        # apply token embedding and positional embedding to type-0 features
+
+        if exists(self.token_emb):
+            feats[0] = self.token_emb(feats[0])
+
+        if exists(self.pos_emb):
+            assert feats[0].shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
+            feats[0] = feats[0] + self.pos_emb(torch.arange(feats[0].shape[1], device = feats[0].device))
+
+        feats[0] = self.embedding_grad_frac * feats[0] + (1 - self.embedding_grad_frac) * feats[0].detach()
+
+        assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         b, n, d, *_, device = *feats[0].shape, feats[0].device
 
