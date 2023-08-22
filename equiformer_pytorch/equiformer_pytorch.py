@@ -35,7 +35,7 @@ from equiformer_pytorch.utils import (
     pad_for_centering_y_to_x
 )
 
-from einops import rearrange, repeat, einsum, pack, unpack
+from einops import rearrange, repeat, reduce, einsum, pack, unpack
 from einops.layers.torch import Rearrange
 
 # constants
@@ -1039,7 +1039,7 @@ class Equiformer(nn.Module):
                 degree = ind + 2
 
                 next_degree_adj_mat = (adj_mat.float() @ adj_mat.float()) > 0
-                next_degree_mask = (next_degree_adj_mat.float() - adj_mat.float()).bool()
+                next_degree_mask = next_degree_adj_mat & ~adj_mat
                 adj_indices = adj_indices.masked_fill(next_degree_mask, degree)
                 adj_mat = next_degree_adj_mat.clone()
 
@@ -1056,7 +1056,7 @@ class Equiformer(nn.Module):
             adj_mat = remove_self(adj_mat)
 
             adj_mat_values = adj_mat.float()
-            adj_mat_max_neighbors = adj_mat_values.sum(dim = -1).max().item()
+            adj_mat_max_neighbors = reduce(adj_mat_values, '... i j -> ... i', 'sum').amax().item()
 
             if max_sparse_neighbors < adj_mat_max_neighbors:
                 eps = 1e-2
