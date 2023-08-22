@@ -23,7 +23,8 @@ def test_edges_equivariance(
         num_degrees = 3,
         l2_dist_attention = l2_dist_attention,
         reversible = reversible,
-        init_out_zero = False
+        init_out_zero = False,
+        reduce_dim_out = True
     )
 
     atoms = torch.randint(0, 28, (2, 32))
@@ -58,7 +59,8 @@ def test_adj_mat_equivariance(
         num_neighbors = 0,
         num_adj_degrees_embed = 2,
         max_sparse_neighbors = 8,
-        init_out_zero = False
+        init_out_zero = False,
+        reduce_dim_out = True
     )
 
     feats = torch.randn(1, 128, 32)

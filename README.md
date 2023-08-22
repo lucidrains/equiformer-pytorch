@@ -85,7 +85,8 @@ model = Equiformer(
     edge_dim = 16,             # dimension of edge embedding
     depth = 2,
     input_degrees = 1,
-    num_degrees = 3
+    num_degrees = 3,
+    reduce_dim_out = True
 )
 
 atoms = torch.randint(0, 28, (2, 32))
@@ -94,6 +95,7 @@ coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
 out = model(atoms, coors, mask, edges = bonds)
+
 out.type0 # (2, 32)
 out.type1 # (2, 32, 3)
 ```
@@ -111,7 +113,7 @@ model = Equiformer(
     dim_head = 64,
     num_degrees = 2,
     valid_radius = 10,
-    reversible = True,
+    reduce_dim_out = True,
     attend_sparse_neighbors = True,  # this must be set to true, in which case it will assert that you pass in the adjacency matrix
     num_neighbors = 0,               # if you set this to 0, it will only consider the connected neighbors as defined by the adjacency matrix. but if you set a value greater than 0, it will continue to fetch the closest points up to this many, excluding the ones already specified by the adjacency matrix
     num_adj_degrees_embed = 2,       # this will derive the second degree connections and embed it correctly
@@ -128,7 +130,10 @@ mask  = torch.ones(1, 128).bool()
 i = torch.arange(128)
 adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 
-out = model(feats, coors, mask, adj_mat = adj_mat) # (1, 128, 512)
+out = model(feats, coors, mask, adj_mat = adj_mat)
+
+out.type0 # (1, 128)
+out.type1 # (1, 128, 3)
 ```
 
 ## Appreciation
