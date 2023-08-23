@@ -26,16 +26,20 @@ def test_transformer(dim):
 # test equivariance
 
 @pytest.mark.parametrize('dim', [32, (4, 8, 16)])
+@pytest.mark.parametrize('dim_in', [32, (32, 32)])
 @pytest.mark.parametrize('l2_dist_attention', [True, False])
 @pytest.mark.parametrize('reversible', [True, False])
 def test_equivariance(
     dim,
+    dim_in,
     l2_dist_attention,
     reversible
 ):
 
     model = Equiformer(
         dim = dim,
+        dim_in=dim_in,
+        input_degrees = len(dim_in) if isinstance(dim_in, tuple) else 1,
         depth = 2,
         l2_dist_attention = l2_dist_attention,
         reversible = reversible,
@@ -44,14 +48,16 @@ def test_equivariance(
         init_out_zero = False
     )
 
-    feat_dim = dim if not isinstance(dim, tuple) else dim[0]
+    if isinstance(dim_in, tuple):
+        feats = {deg: torch.randn(1, 32, dim, 2*deg + 1) for deg, dim in enumerate(dim_in)}
+    else:
+        feats = torch.randn(1, 32, dim_in)
 
-    feats = torch.randn(1, 32, feat_dim)
     coors = torch.randn(1, 32, 3)
     mask  = torch.ones(1, 32).bool()
 
     R   = rot(*torch.randn(3))
-    _, out1 = model(feats, coors @ R, mask)
+    _, out1 = model({0: feats[0], 1: feats[1] @ R} if isinstance(feats, dict) else feats, coors @ R, mask)
     out2 = model(feats, coors, mask)[1] @ R
 
     assert torch.allclose(out1, out2, atol = 1e-4), 'is not equivariant'
