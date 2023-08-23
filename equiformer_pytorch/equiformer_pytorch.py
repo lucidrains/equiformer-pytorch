@@ -997,22 +997,31 @@ class Equiformer(nn.Module):
     ):
         _mask = mask
 
-        if torch.is_tensor(feats):
-            feats = rearrange(feats, '... -> ... 1')
-            feats = {0: feats}
-
         # apply token embedding and positional embedding to type-0 features
+        # (if type-0 feats are passed as a tensor they are expected to be of a flattened shape (batch, seq, n_feats)
+        # but if they are passed in a dict (fiber) they are expected to be of a unified shape (batch, seq, n_feats, 1=2*0+1))
+
+        if torch.is_tensor(feats):
+            type0_feats = feats
+        else:
+            type0_feats = rearrange(feats[0], '... 1 -> ...')
 
         if exists(self.token_emb):
-            feats[0] = self.token_emb(feats[0])
+            type0_feats = self.token_emb(type0_feats)
 
         if exists(self.pos_emb):
-            assert feats[0].shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
-            feats[0] = feats[0] + self.pos_emb(torch.arange(feats[0].shape[1], device = feats[0].device))
+            assert type0_feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
+            type0_feats = type0_feats + self.pos_emb(torch.arange(type0_feats.shape[1], device = type0_feats.device))
 
-        feats[0] = self.embedding_grad_frac * feats[0] + (1 - self.embedding_grad_frac) * feats[0].detach()
+        type0_feats = self.embedding_grad_frac * type0_feats + (1 - self.embedding_grad_frac) * type0_feats.detach()
 
         assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
+
+        type0_feats = rearrange(type0_feats, '... -> ... 1')
+        if torch.is_tensor(feats):
+            feats = {0: type0_feats}
+        else:
+            feats[0] = type0_feats
 
         b, n, d, *_, device = *feats[0].shape, feats[0].device
 
