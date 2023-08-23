@@ -1093,6 +1093,11 @@ class Equiformer(nn.Module):
         modified_rel_dist = rel_dist.clone()
         max_value = get_max_value(modified_rel_dist) # for masking out nodes from being considered as neighbors
 
+        # use sparse neighbor mask to assign priority of bonded
+
+        if exists(sparse_neighbor_mask):
+            modified_rel_dist = modified_rel_dist.masked_fill(sparse_neighbor_mask, 0.)
+
         # neighbors
 
         if exists(neighbor_mask):
