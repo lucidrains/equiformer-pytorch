@@ -48,7 +48,7 @@ def safe_cat(arr, el, dim):
         return el
     return torch.cat((arr, el), dim = dim)
 
-def cast_tuple(val, depth):
+def cast_tuple(val, depth = 1):
     return val if isinstance(val, tuple) else (val,) * depth
 
 def batched_index_select(values, indices, dim = 1):

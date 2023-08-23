@@ -7,7 +7,7 @@ from beartype.typing import Optional, Union, Tuple
 from beartype import beartype
 
 import torch
-from torch import nn
+from torch import nn, is_tensor, Tensor
 import torch.nn.functional as F
 
 from opt_einsum import contract as opt_einsum
@@ -985,48 +985,53 @@ class Equiformer(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
+    @beartype
     def forward(
         self,
-        feats: Union[torch.Tensor, dict[int, torch.Tensor]],
-        coors: torch.Tensor,
+        inputs: Union[Tensor, dict[int, Tensor]],
+        coors: Tensor,
         mask = None,
         adj_mat = None,
         edges = None,
         return_pooled = False,
         neighbor_mask = None,
     ):
-        _mask = mask
+        _mask, device = mask, self.device
 
         # apply token embedding and positional embedding to type-0 features
         # (if type-0 feats are passed as a tensor they are expected to be of a flattened shape (batch, seq, n_feats)
         # but if they are passed in a dict (fiber) they are expected to be of a unified shape (batch, seq, n_feats, 1=2*0+1))
 
-        if torch.is_tensor(feats):
-            type0_feats = feats
-        else:
-            type0_feats = rearrange(feats[0], '... 1 -> ...')
+        if is_tensor(inputs):
+            inputs = {0: inputs}
+
+        feats = inputs[0]
+
+        if feats.ndim == 4:
+            feats = rearrange(feats, '... 1 -> ...')
 
         if exists(self.token_emb):
-            type0_feats = self.token_emb(type0_feats)
+            assert feats.ndim == 2
+            feats = self.token_emb(feats)
 
         if exists(self.pos_emb):
-            assert type0_feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
-            type0_feats = type0_feats + self.pos_emb(torch.arange(type0_feats.shape[1], device = type0_feats.device))
+            seq_len = feats.shape[1]
+            assert seq_len <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
 
-        type0_feats = self.embedding_grad_frac * type0_feats + (1 - self.embedding_grad_frac) * type0_feats.detach()
+            feats = feats + self.pos_emb(torch.arange(seq_len, device = device))
+
+        feats = self.embedding_grad_frac * feats + (1 - self.embedding_grad_frac) * feats.detach()
 
         assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
-        type0_feats = rearrange(type0_feats, '... -> ... 1')
-        if torch.is_tensor(feats):
-            feats = {0: type0_feats}
-        else:
-            feats[0] = type0_feats
+        b, n, d = feats.shape
 
-        b, n, d, *_, device = *feats[0].shape, feats[0].device
+        feats = rearrange(feats, 'b n d -> b n d 1')
+
+        inputs[0] = feats
 
         assert d == self.type0_feat_dim, f'feature dimension {d} must be equal to dimension given at init {self.type0_feat_dim}'
-        assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
+        assert set(map(int, inputs.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
         num_degrees, neighbors, max_sparse_neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.max_sparse_neighbors, self.valid_radius
 
@@ -1159,7 +1164,7 @@ class Equiformer(nn.Module):
 
         edge_info = EdgeInfo(neighbor_indices, neighbor_mask, edges)
 
-        x = feats
+        x = inputs
 
         # project in
 

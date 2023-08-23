@@ -3,7 +3,13 @@ import pytest
 import torch
 from equiformer_pytorch.equiformer_pytorch import Equiformer
 from equiformer_pytorch.irr_repr import rot
-from equiformer_pytorch.utils import torch_default_dtype
+
+from equiformer_pytorch.utils import (
+    torch_default_dtype,
+    cast_tuple,
+    to_order,
+    exists
+)
 
 # test output shape
 
@@ -35,11 +41,12 @@ def test_equivariance(
     l2_dist_attention,
     reversible
 ):
+    dim_in = cast_tuple(dim_in)
 
     model = Equiformer(
         dim = dim,
-        dim_in=dim_in,
-        input_degrees = len(dim_in) if isinstance(dim_in, tuple) else 1,
+        dim_in = dim_in,
+        input_degrees = len(dim_in),
         depth = 2,
         l2_dist_attention = l2_dist_attention,
         reversible = reversible,
@@ -48,16 +55,20 @@ def test_equivariance(
         init_out_zero = False
     )
 
-    if isinstance(dim_in, tuple):
-        feats = {deg: torch.randn(1, 32, dim, 2*deg + 1) for deg, dim in enumerate(dim_in)}
-    else:
-        feats = torch.randn(1, 32, dim_in)
+    feats = {deg: torch.randn(1, 32, dim, to_order(deg)) for deg, dim in enumerate(dim_in)}
+    type0, type1 = feats[0], feats.get(1, None)
 
     coors = torch.randn(1, 32, 3)
     mask  = torch.ones(1, 32).bool()
 
     R   = rot(*torch.randn(3))
-    _, out1 = model({0: feats[0], 1: feats[1] @ R} if isinstance(feats, dict) else feats, coors @ R, mask)
+
+    maybe_rotated_feats = {0: type0}
+
+    if exists(type1):
+        maybe_rotated_feats[1] = type1 @ R
+
+    _, out1 = model(maybe_rotated_feats, coors @ R, mask)
     out2 = model(feats, coors, mask)[1] @ R
 
     assert torch.allclose(out1, out2, atol = 1e-4), 'is not equivariant'
