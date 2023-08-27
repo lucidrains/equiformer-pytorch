@@ -653,8 +653,7 @@ class L2DistAttention(nn.Module):
 
             if not is_degree_zero:
                 sim = sim.sum(dim = -1)
-
-                sim = sim.masked_fill(~padded_neighbor_mask, -torch.finfo(sim.dtype).max)
+                sim = sim.masked_fill(~neighbor_mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
             out = einsum(attn, v, f'b h i j, {kv_einsum_eq} -> b h i d m')
