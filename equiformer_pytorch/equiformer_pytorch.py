@@ -993,8 +993,7 @@ class Equiformer(nn.Module):
         mask = None,
         adj_mat = None,
         edges = None,
-        return_pooled = False,
-        neighbor_mask = None,
+        return_pooled = False
     ):
         _mask, device = mask, self.device
 
@@ -1109,21 +1108,15 @@ class Equiformer(nn.Module):
         modified_rel_dist = rel_dist.clone()
         max_value = get_max_value(modified_rel_dist) # for masking out nodes from being considered as neighbors
 
+        # make sure padding tokens are not considered when ordering by relative distance
+
+        if exists(mask):
+            modified_rel_dist = modified_rel_dist.masked_fill(~mask, max_value)
+
         # use sparse neighbor mask to assign priority of bonded
 
         if exists(sparse_neighbor_mask):
             modified_rel_dist = modified_rel_dist.masked_fill(sparse_neighbor_mask, 0.)
-
-        # neighbors
-
-        if exists(neighbor_mask):
-            neighbor_mask = remove_self(neighbor_mask)
-
-            max_neighbors = neighbor_mask.sum(dim = -1).max().item()
-            if max_neighbors > neighbors:
-                print(f'neighbor_mask shows maximum number of neighbors as {max_neighbors} but specified number of neighbors is {neighbors}')
-
-            modified_rel_dist = modified_rel_dist.masked_fill(~neighbor_mask, max_value)
 
         # if number of local neighbors by distance is set to 0, then only fetch the sparse neighbors defined by adjacency matrix
 
