@@ -610,6 +610,9 @@ class L2DistAttention(nn.Module):
         if exists(neighbor_mask):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b 1 i j')
 
+            if self.attend_self:
+                neighbor_mask = F.pad(neighbor_mask, (1, 0), value = True)
+
         features = self.prenorm(features)
 
         queries = self.to_q(features)
@@ -651,9 +654,6 @@ class L2DistAttention(nn.Module):
             if not is_degree_zero:
                 sim = sim.sum(dim = -1)
 
-            if exists(neighbor_mask):
-                left_pad_needed = int(self.attend_self)
-                padded_neighbor_mask = F.pad(neighbor_mask, (left_pad_needed, 0), value = True)
                 sim = sim.masked_fill(~padded_neighbor_mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
@@ -697,6 +697,8 @@ class MLPAttention(nn.Module):
 
         self.single_headed_kv = single_headed_kv
         value_hidden_fiber = hidden_fiber if not single_headed_kv else dim_head
+
+        self.attend_self = attend_self
 
         self.scale = tuple(dim ** -0.5 for dim in dim_head)
         self.heads = heads
@@ -766,6 +768,14 @@ class MLPAttention(nn.Module):
     ):
         one_headed_kv = self.single_headed_kv
 
+        _, neighbor_mask, _ = edge_info
+
+        if exists(neighbor_mask):
+            if self.attend_self:
+                neighbor_mask = F.pad(neighbor_mask, (1, 0), value = True)
+
+            neighbor_mask = rearrange(neighbor_mask, '... -> ... 1')
+
         features = self.prenorm(features)
 
         intermediate = self.to_attn_and_v(
@@ -788,6 +798,10 @@ class MLPAttention(nn.Module):
             attn_intermediate = rearrange(attn_intermediate, '... 1 -> ...')
             attn_logits = fn(attn_intermediate)
             attn_logits = attn_logits * scale
+
+            if exists(neighbor_mask):
+                attn_logits = attn_logits.masked_fill(~neighbor_mask, -torch.finfo(attn_logits.dtype).max)
+
             attn = attn_logits.softmax(dim = -2) # (batch, source, target, heads)
             attentions.append(attn)
 
