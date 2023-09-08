@@ -3,7 +3,7 @@ from functools import partial
 from itertools import product
 from collections import namedtuple
 
-from beartype.typing import Optional, Union, Tuple
+from beartype.typing import Optional, Union, Tuple, Dict
 from beartype import beartype
 
 import torch
@@ -1001,7 +1001,7 @@ class Equiformer(nn.Module):
     @beartype
     def forward(
         self,
-        inputs: Union[Tensor, dict[int, Tensor]],
+        inputs: Union[Tensor, Dict[int, Tensor]],
         coors: Tensor,
         mask = None,
         adj_mat = None,
