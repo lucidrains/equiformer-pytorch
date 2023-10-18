@@ -551,7 +551,8 @@ class L2DistAttention(nn.Module):
         radial_hidden_dim = 64,
         splits = 4,
         num_linear_attn_heads = 0,
-        init_out_zero = True
+        init_out_zero = True,
+        gate_attn_head_outputs = True
     ):
         super().__init__()
         num_degrees = len(fiber)
@@ -587,6 +588,21 @@ class L2DistAttention(nn.Module):
             self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
             hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
 
+        # gating heads across all degree outputs
+        # to allow for attending to nothing
+
+        self.attn_head_gates = None
+
+        if gate_attn_head_outputs:
+            self.attn_head_gates = nn.Sequential(
+                Rearrange('... d 1 -> ... d'),
+                nn.Linear(fiber[0], sum(heads)),
+                nn.Sigmoid(),
+                Rearrange('... n h -> ... h n 1 1')
+            )
+
+        # combine heads
+
         self.to_out = Linear(hidden_fiber, fiber)
 
         if init_out_zero:
@@ -615,6 +631,8 @@ class L2DistAttention(nn.Module):
 
         features = self.prenorm(features)
 
+        # generate queries, keys, values
+
         queries = self.to_q(features)
 
         keyvalues   = self.to_kv(
@@ -625,11 +643,20 @@ class L2DistAttention(nn.Module):
             D = D
         )
 
+        # create gates
+
+        gates = (None,) * len(self.heads)
+
+        if exists(self.attn_head_gates):
+            gates = self.attn_head_gates(features[0]).split(self.heads, dim = -4)
+
+        # single headed vs not
+
         kv_einsum_eq = 'b h i j d m' if not one_head_kv else 'b i j d m'
 
         outputs = {}
 
-        for degree, h, scale in zip(features.keys(), self.heads, self.scale):
+        for degree, gate, h, scale in zip(features.keys(), gates, self.heads, self.scale):
             is_degree_zero = degree == 0
 
             q, kv = map(lambda t: t[degree], (queries, keyvalues))
@@ -657,6 +684,10 @@ class L2DistAttention(nn.Module):
 
             attn = sim.softmax(dim = -1)
             out = einsum(attn, v, f'b h i j, {kv_einsum_eq} -> b h i d m')
+
+            if exists(gate):
+                out = out * gate
+
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         if self.has_linear_attn:
@@ -681,6 +712,7 @@ class MLPAttention(nn.Module):
         radial_hidden_dim = 16,
         num_linear_attn_heads = 0,
         init_out_zero = True,
+        gate_attn_head_outputs = True,
         **kwargs
     ):
         super().__init__()
@@ -748,6 +780,19 @@ class MLPAttention(nn.Module):
             self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
             hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
 
+        # gating heads across all degree outputs
+        # to allow for attending to nothing
+
+        self.attn_head_gates = None
+
+        if gate_attn_head_outputs:
+            self.attn_head_gates = nn.Sequential(
+                Rearrange('... d 1 -> ... d'),
+                nn.Linear(fiber[0], sum(heads)),
+                nn.Sigmoid(),
+                Rearrange('... h -> ... h 1 1')
+            )
+
         # combining heads and projection out
 
         self.to_out = Linear(hidden_fiber, fiber)
@@ -789,6 +834,13 @@ class MLPAttention(nn.Module):
 
         intermediate[0] = value_branch_type0
 
+        # create gates
+
+        gates = (None,) * len(self.heads)
+
+        if exists(self.attn_head_gates):
+            gates = self.attn_head_gates(features[0]).split(self.heads, dim = -3)
+
         # process the attention branch
 
         attentions = []
@@ -814,11 +866,15 @@ class MLPAttention(nn.Module):
 
         value_einsum_eq = 'b i j h d m' if not one_headed_kv else 'b i j d m'
 
-        for degree, (attn, value, h) in enumerate(zip(attentions, values.values(), self.heads)):
+        for degree, (attn, value, gate, h) in enumerate(zip(attentions, values.values(), gates, self.heads)):
             if not one_headed_kv:
                 value = rearrange(value, 'b i j (h d) m -> b i j h d m', h = h)
 
             out = einsum(attn, value, f'b i j h, {value_einsum_eq} -> b i h d m')
+
+            if exists(gate):
+                out = out * gate
+
             out = rearrange(out, 'b i h d m -> b i (h d) m')
             outputs[degree] = out
 
@@ -863,6 +919,7 @@ class Equiformer(nn.Module):
         l2_dist_attention = True,           # turn to False to use MLP attention as proposed in paper, but dot product attention with -cdist similarity is still far better, and i haven't even rotated distances (rotary embeddings) into the type 0 features yet
         reversible = False,                 # turns on reversible networks, to scale depth without incurring depth times memory cost
         attend_sparse_neighbors = False,    # ability to accept an adjacency matrix
+        gate_attn_head_outputs = True,      # gate each attention head output, to allow for attending to nothing
         num_adj_degrees_embed = None,
         adj_dim = 0,
         max_sparse_neighbors = float('inf'),
@@ -958,6 +1015,7 @@ class Equiformer(nn.Module):
                     edge_dim = edge_dim,
                     single_headed_kv = single_headed_kv,
                     radial_hidden_dim = radial_hidden_dim,
+                    gate_attn_head_outputs = gate_attn_head_outputs,
                     **kwargs
                 ),
                 FeedForward(self.dim, include_htype_norms = ff_include_htype_norms)
