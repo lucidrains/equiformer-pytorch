@@ -10,6 +10,8 @@ import torch
 from torch import nn, is_tensor, Tensor
 import torch.nn.functional as F
 
+from taylor_series_linear_attention import TaylorSeriesLinearAttn
+
 from opt_einsum import contract as opt_einsum
 
 from equiformer_pytorch.basis import (
@@ -550,6 +552,7 @@ class L2DistAttention(nn.Module):
         single_headed_kv = False,
         radial_hidden_dim = 64,
         splits = 4,
+        linear_attn_dim_head = 8,
         num_linear_attn_heads = 0,
         init_out_zero = True,
         gate_attn_head_outputs = True
@@ -585,8 +588,8 @@ class L2DistAttention(nn.Module):
 
         if self.has_linear_attn:
             degree_zero_dim = fiber[0]
-            self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
-            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
+            self.linear_attn = TaylorSeriesLinearAttn(degree_zero_dim, dim_head = linear_attn_dim_head, heads = num_linear_attn_heads, combine_heads = False)
+            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + linear_attn_dim_head * num_linear_attn_heads)
 
         # gating heads across all degree outputs
         # to allow for attending to nothing
@@ -691,7 +694,9 @@ class L2DistAttention(nn.Module):
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         if self.has_linear_attn:
-            lin_attn_out = self.linear_attn(features[0], mask = mask)
+            linear_attn_input = rearrange(features[0], '... 1 -> ...')
+            lin_attn_out = self.linear_attn(linear_attn_input, mask = mask)
+            lin_attn_out = rearrange(lin_attn_out, '... -> ... 1')
             outputs[0] = torch.cat((outputs[0], lin_attn_out), dim = -2)
 
         return self.to_out(outputs)
@@ -710,6 +715,7 @@ class MLPAttention(nn.Module):
         attn_leakyrelu_slope = 0.1,
         attn_hidden_dim_mult = 4,
         radial_hidden_dim = 16,
+        linear_attn_dim_head = 8,
         num_linear_attn_heads = 0,
         init_out_zero = True,
         gate_attn_head_outputs = True,
@@ -777,8 +783,8 @@ class MLPAttention(nn.Module):
 
         if self.has_linear_attn:
             degree_zero_dim = fiber[0]
-            self.linear_attn = LinearAttention(degree_zero_dim, dim_head = dim_head[0], heads = num_linear_attn_heads)
-            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + dim_head[0] * num_linear_attn_heads)
+            self.linear_attn = TaylorSeriesLinearAttn(degree_zero_dim, dim_head = linear_attn_dim_head, heads = num_linear_attn_heads, combine_heads = False)
+            hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + linear_attn_dim_head * num_linear_attn_heads)
 
         # gating heads across all degree outputs
         # to allow for attending to nothing
@@ -881,7 +887,10 @@ class MLPAttention(nn.Module):
         # linear attention
 
         if self.has_linear_attn:
-            lin_attn_out = self.linear_attn(features[0], mask = mask)
+            linear_attn_input = rearrange(features[0], '... 1 -> ...')
+            lin_attn_out = self.linear_attn(linear_attn_input, mask = mask)
+            lin_attn_out = rearrange(lin_attn_out, '... -> ... 1')
+
             outputs[0] = torch.cat((outputs[0], lin_attn_out), dim = -2)
 
         # combine heads out
