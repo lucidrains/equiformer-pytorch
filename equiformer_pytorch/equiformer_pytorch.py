@@ -588,7 +588,7 @@ class L2DistAttention(nn.Module):
 
         if self.has_linear_attn:
             degree_zero_dim = fiber[0]
-            self.linear_attn = TaylorSeriesLinearAttn(degree_zero_dim, dim_head = linear_attn_dim_head, heads = num_linear_attn_heads, combine_heads = False)
+            self.linear_attn = TaylorSeriesLinearAttn(degree_zero_dim, dim_head = linear_attn_dim_head, heads = num_linear_attn_heads, combine_heads = False, gate_value_heads = True)
             hidden_fiber = tuple_set_at_index(hidden_fiber, 0, hidden_fiber[0] + linear_attn_dim_head * num_linear_attn_heads)
 
         # gating heads across all degree outputs

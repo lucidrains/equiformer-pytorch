@@ -26,7 +26,7 @@ setup(
     'einops>=0.6',
     'filelock',
     'opt-einsum',
-    'taylor-series-linear-attention>=0.0.11',
+    'taylor-series-linear-attention>=0.1.4',
     'torch>=1.6',
   ],
   setup_requires=[
