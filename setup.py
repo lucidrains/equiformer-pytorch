@@ -24,6 +24,7 @@ setup(
   install_requires=[
     'beartype',
     'einops>=0.6',
+    'einx',
     'filelock',
     'opt-einsum',
     'taylor-series-linear-attention>=0.1.4',

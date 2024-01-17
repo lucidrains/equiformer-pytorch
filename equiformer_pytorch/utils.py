@@ -51,22 +51,6 @@ def safe_cat(arr, el, dim):
 def cast_tuple(val, depth = 1):
     return val if isinstance(val, tuple) else (val,) * depth
 
-def batched_index_select(values, indices, dim = 1):
-    value_dims = values.shape[(dim + 1):]
-    values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
-    indices = indices[(..., *((None,) * len(value_dims)))]
-    indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
-    value_expand_len = len(indices_shape) - (dim + 1)
-    values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
-
-    value_expand_shape = [-1] * len(values.shape)
-    expand_slice = slice(dim, (dim + value_expand_len))
-    value_expand_shape[expand_slice] = indices.shape[expand_slice]
-    values = values.expand(*value_expand_shape)
-
-    dim += value_expand_len
-    return values.gather(dim, indices)
-
 def fast_split(arr, splits, dim=0):
     axis_len = arr.shape[dim]
     splits = min(axis_len, max(splits, 1))

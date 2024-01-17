@@ -27,7 +27,6 @@ from equiformer_pytorch.reversible import (
 from equiformer_pytorch.utils import (
     exists,
     default,
-    batched_index_select,
     masked_mean,
     to_order,
     cast_tuple,
@@ -36,6 +35,8 @@ from equiformer_pytorch.utils import (
     slice_for_centering_y_to_x,
     pad_for_centering_y_to_x
 )
+
+from einx import get_at
 
 from einops import rearrange, repeat, reduce, einsum, pack, unpack
 from einops.layers.torch import Rearrange
@@ -336,7 +337,9 @@ class DTP(nn.Module):
 
                 xi, xj = source[degree_in], target[degree_in]
 
-                x = batched_index_select(xj, neighbor_indices, dim = 1)
+                flattened_neighbor_indices, ps = pack_one(neighbor_indices, 'b *')
+                x = get_at('b [i] d m, b k -> b k d m', xj, flattened_neighbor_indices)
+                x = unpack_one(x, ps, 'b * d m')
 
                 if self.project_xi_xj:
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
@@ -1215,15 +1218,16 @@ class Equiformer(nn.Module):
         dist_values, nearest_indices = modified_rel_dist.topk(total_neighbors, dim = -1, largest = False)
         neighbor_mask = dist_values <= valid_radius
 
-        neighbor_rel_dist = batched_index_select(rel_dist, nearest_indices, dim = 2)
-        neighbor_rel_pos = batched_index_select(rel_pos, nearest_indices, dim = 2)
-        neighbor_indices = batched_index_select(indices, nearest_indices, dim = 2)
+        neighbor_rel_dist = get_at('b i [j], b i k -> b i k', rel_dist, nearest_indices)
+        neighbor_rel_pos = get_at('b i [j] c, b i k -> b i k c', rel_pos, nearest_indices)
+        neighbor_indices = get_at('b i [j], b i k -> b i k', indices, nearest_indices)
 
         if exists(mask):
-            neighbor_mask = neighbor_mask & batched_index_select(mask, nearest_indices, dim = 2)
+            nearest_mask = get_at('b i [j], b i k -> b i k', mask, nearest_indices)
+            neighbor_mask = neighbor_mask & nearest_mask
 
         if exists(edges):
-            edges = batched_index_select(edges, nearest_indices, dim = 2)
+            edges = get_at('b i [j] d, b i k -> b i k d', edges, nearest_indices)
 
         # embed relative distances
 
