@@ -337,9 +337,7 @@ class DTP(nn.Module):
 
                 xi, xj = source[degree_in], target[degree_in]
 
-                flattened_neighbor_indices, ps = pack_one(neighbor_indices, 'b *')
-                x = get_at('b [i] d m, b k -> b k d m', xj, flattened_neighbor_indices)
-                x = unpack_one(x, ps, 'b * d m')
+                x = get_at('b [i] d m, b j k -> b j k d m', xj, neighbor_indices)
 
                 if self.project_xi_xj:
                     xi = rearrange(xi, 'b i d m -> b i 1 d m')
