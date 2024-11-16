@@ -1057,7 +1057,7 @@ class Equiformer(nn.Module):
 
     @basis.setter
     def basis(self, basis):
-        self.basis_keys = basis.keys()
+        self.basis_keys = list(basis.keys())
 
         for k, v in basis.items():
             self.register_buffer(f'basis:{k}', v)
