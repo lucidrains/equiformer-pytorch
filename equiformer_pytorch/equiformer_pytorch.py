@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 from math import sqrt
 from functools import partial
 from itertools import product
 from collections import namedtuple
 
-from beartype.typing import Optional, Union, Tuple, Dict
 from beartype import beartype
 
 import torch
+from torch.nn import Module, ModuleList, ModuleDict
 from torch import nn, is_tensor, Tensor
 import torch.nn.functional as F
 
@@ -59,16 +61,16 @@ def unpack_one(t, ps, pattern):
 
 @beartype
 def fiber_product(
-    fiber_in: Tuple[int, ...],
-    fiber_out: Tuple[int, ...]
+    fiber_in: tuple[int, ...],
+    fiber_out: tuple[int, ...]
 ):
     fiber_in, fiber_out = tuple(map(lambda t: [(degree, dim) for degree, dim in enumerate(t)], (fiber_in, fiber_out)))
     return product(fiber_in, fiber_out)
 
 @beartype
 def fiber_and(
-    fiber_in: Tuple[int, ...],
-    fiber_out: Tuple[int, ...]
+    fiber_in: tuple[int, ...],
+    fiber_out: tuple[int, ...]
 ):
     fiber_in = [(degree, dim) for degree, dim in enumerate(fiber_in)]
     fiber_out_degrees = set(range(len(fiber_out)))
@@ -136,7 +138,7 @@ def cdist(a, b, dim = -1, eps = 1e-5):
 
 # classes
 
-class Residual(nn.Module):
+class Residual(Module):
     def __init__(self, fn):
         super().__init__()
         self.fn = fn
@@ -147,7 +149,7 @@ class Residual(nn.Module):
             return x.add_(y)
         return x + y
 
-class LayerNorm(nn.Module):
+class LayerNorm(Module):
     def __init__(self, dim):
         super().__init__()
         self.gamma = nn.Parameter(torch.ones(dim))
@@ -156,12 +158,12 @@ class LayerNorm(nn.Module):
     def forward(self, x):
         return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
 
-class Linear(nn.Module):
+class Linear(Module):
     @beartype
     def __init__(
         self,
-        fiber_in: Tuple[int, ...],
-        fiber_out: Tuple[int, ...]
+        fiber_in: tuple[int, ...],
+        fiber_out: tuple[int, ...]
     ):
         super().__init__()
         self.weights = nn.ParameterList([])
@@ -183,11 +185,11 @@ class Linear(nn.Module):
 
         return out
 
-class Norm(nn.Module):
+class Norm(Module):
     @beartype
     def __init__(
         self,
-        fiber: Tuple[int, ...],
+        fiber: tuple[int, ...],
         eps = 1e-12,
     ):
         """
@@ -215,11 +217,11 @@ class Norm(nn.Module):
 
         return output
 
-class Gate(nn.Module):
+class Gate(Module):
     @beartype
     def __init__(
         self,
-        fiber: Tuple[int, ...]
+        fiber: tuple[int, ...]
     ):
         super().__init__()
 
@@ -249,14 +251,14 @@ class Gate(nn.Module):
 
         return output
 
-class DTP(nn.Module):
+class DTP(Module):
     """ 'Tensor Product' - in the equivariant sense """
 
     @beartype
     def __init__(
         self,
-        fiber_in: Tuple[int, ...],
-        fiber_out: Tuple[int, ...],
+        fiber_in: tuple[int, ...],
+        fiber_out: tuple[int, ...],
         self_interaction = True,
         project_xi_xj = True,   # whether to project xi and xj and then sum, as in paper
         project_out = True,     # whether to do a project out after the "tensor product"
@@ -276,7 +278,7 @@ class DTP(nn.Module):
             self.to_xi = Linear(fiber_in, fiber_in)
             self.to_xj = Linear(fiber_in, fiber_in)
 
-        self.kernel_unary = nn.ModuleDict()
+        self.kernel_unary = ModuleDict()
 
         # in the depthwise tensor product, each channel of the output only gets contribution from one degree of the input (please email me if i misconstrued this)
 
@@ -415,7 +417,7 @@ class DTP(nn.Module):
         outputs = {degree: torch.cat(tensors, dim = -3) for degree, tensors in enumerate(zip(self_interact_out.values(), outputs.values()))}
         return outputs
 
-class Radial(nn.Module):
+class Radial(Module):
     def __init__(
         self,
         degree_in,
@@ -453,12 +455,12 @@ class Radial(nn.Module):
 
 # feed forwards
 
-class FeedForward(nn.Module):
+class FeedForward(Module):
     @beartype
     def __init__(
         self,
-        fiber: Tuple[int, ...],
-        fiber_out: Optional[Tuple[int, ...]] = None,
+        fiber: tuple[int, ...],
+        fiber_out: tuple[int, ...] | None = None,
         mult = 4,
         include_htype_norms = True,
         init_out_zero = True
@@ -501,7 +503,7 @@ class FeedForward(nn.Module):
 
 # global linear attention
 
-class LinearAttention(nn.Module):
+class LinearAttention(Module):
     def __init__(
         self,
         dim,
@@ -541,13 +543,13 @@ class LinearAttention(nn.Module):
 
 # attention
 
-class L2DistAttention(nn.Module):
+class L2DistAttention(Module):
     @beartype
     def __init__(
         self,
-        fiber: Tuple[int, ...],
-        dim_head: Union[int, Tuple[int, ...]] = 64,
-        heads: Union[int, Tuple[int, ...]] = 8,
+        fiber: tuple[int, ...],
+        dim_head: int | tuple[int, ...] = 64,
+        heads: int | tuple[int, ...] = 8,
         attend_self = False,
         edge_dim = None,
         single_headed_kv = False,
@@ -702,13 +704,13 @@ class L2DistAttention(nn.Module):
 
         return self.to_out(outputs)
 
-class MLPAttention(nn.Module):
+class MLPAttention(Module):
     @beartype
     def __init__(
         self,
-        fiber: Tuple[int, ...],
-        dim_head: Union[int, Tuple[int, ...]] = 64,
-        heads: Union[int, Tuple[int, ...]] = 8,
+        fiber: tuple[int, ...],
+        dim_head: int | tuple[int, ...] = 64,
+        heads: int | tuple[int, ...] = 8,
         attend_self = False,
         edge_dim = None,
         splits = 4,
@@ -763,7 +765,7 @@ class MLPAttention(nn.Module):
 
         # non-linear projection of attention branch into the attention logits
 
-        self.to_attn_logits = nn.ModuleList([
+        self.to_attn_logits = ModuleList([
             nn.Sequential(
                 nn.LeakyReLU(attn_leakyrelu_slope),
                 nn.Linear(attn_hidden_dim, h, bias = False)
@@ -900,17 +902,17 @@ class MLPAttention(nn.Module):
 
 # main class
 
-class Equiformer(nn.Module):
+class Equiformer(Module):
     @beartype
     def __init__(
         self,
         *,
-        dim: Union[int, Tuple[int, ...]],
-        dim_in: Optional[Union[int, Tuple[int, ...]]] = None,
+        dim: int | tuple[int, ...],
+        dim_in: int | tuple[int, ...] | None = None,
         num_degrees = 2,
         input_degrees = 1,
-        heads: Union[int, Tuple[int, ...]] = 8,
-        dim_head: Union[int, Tuple[int, ...]] = 24,
+        heads: int | tuple[int, ...] = 8,
+        dim_head: int | tuple[int, ...] = 24,
         depth = 2,
         valid_radius = 1e5,
         num_neighbors = float('inf'),
@@ -1069,7 +1071,7 @@ class Equiformer(nn.Module):
     @beartype
     def forward(
         self,
-        inputs: Union[Tensor, Dict[int, Tensor]],
+        inputs: Tensor | dict[int, Tensor],
         coors: Tensor,
         mask = None,
         adj_mat = None,
