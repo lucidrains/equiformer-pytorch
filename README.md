@@ -10,6 +10,8 @@ Update: There has been a new development that makes scaling the number of degree
 
 Will definitely be putting more work / exploration into this. For now, I've incorporated the tricks from the first two paper for Equiformer v1, save for complete conversion into SO(2).
 
+Update 2: There appears to be a new SOTA without any interaction between higher degree reps (in other words, all tensor product / clebsch gordan math goes away). [GotenNet](https://github.com/lucidrains/gotennet-pytorch), which seems to be a transformer rendition of [HEGNN](https://github.com/GLAD-RUC/HEGNN)
+
 ## Install
 
 ```bash
