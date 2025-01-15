@@ -935,9 +935,11 @@ class Equiformer(Module):
         num_adj_degrees_embed = None,
         adj_dim = 0,
         max_sparse_neighbors = float('inf'),
+        device = None,
         **kwargs
     ):
         super().__init__()
+        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.embedding_grad_frac = embedding_grad_frac # trick for more stable training
 
@@ -1063,10 +1065,6 @@ class Equiformer(Module):
 
         for k, v in basis.items():
             self.register_buffer(f'basis:{k}', v)
-
-    @property
-    def device(self):
-        return next(self.parameters()).device
 
     @beartype
     def forward(
